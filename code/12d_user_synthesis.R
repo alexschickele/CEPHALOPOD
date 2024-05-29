@@ -93,7 +93,7 @@ the user, however.")
   batched_pdfs <- c(batched_pdfs, output_file)
   }
 
-  pdf_combine(input = batched_pdfs, output = paste0(output_wd, "/USER_SUMMARY_batches.pdf"))
+  pdf_combine(input = batched_pdfs, output = paste0(output_wd, "/USER_SUMMARY.pdf"))
 
   # Loop over the batched_pdfs
   for (file in batched_pdfs) {

@@ -14,7 +14,7 @@
 
 query_bio_wrapper <- function(FOLDER_NAME = NULL,
                               SUBFOLDER_NAME = NULL){
-
+  set.seed(123)
   # --- 1. Initialize function
   # --- 1.1. Start logs - new file
   sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/log.txt"), open = "wt"),
