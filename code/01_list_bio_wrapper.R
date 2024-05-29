@@ -31,7 +31,7 @@
 list_bio_wrapper <- function(FOLDER_NAME = "test_run",
                              DATA_SOURCE = "biomass",
                              SAMPLE_SELECT = list(MIN_SAMPLE = 50, MIN_DEPTH = 0, MAX_DEPTH = 50, START_YEAR = 1990, STOP_YEAR = 2016)){
-  set.seed(123)
+
   # --- 1. Initialize
   # --- 1.1. Add default predictor depth range if not specified
   if(is.null(SAMPLE_SELECT$FEATURE_MIN_DEPTH)){SAMPLE_SELECT$FEATURE_MIN_DEPTH <- SAMPLE_SELECT$TARGET_MIN_DEPTH}

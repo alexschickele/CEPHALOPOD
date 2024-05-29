@@ -9,7 +9,11 @@
 #' @return the general HP list is saved in the CALL.RData object
 
 hyperparameter <- function(FOLDER_NAME = NULL){
-  set.seed(123)
+
+  if(!exists("SEED")){
+    SEED <- 123
+  }
+  set.seed(SEED)
   # --- 1. Initialize the  object
   # --- 1.1. Output object
   HP <- list()

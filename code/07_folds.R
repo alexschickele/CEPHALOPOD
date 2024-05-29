@@ -10,7 +10,10 @@ folds <- function(FOLDER_NAME = NULL,
                   SUBFOLDER_NAME = NULL){
 
   # --- 1. Initialize function
-  set.seed(123)
+  if(!exists("SEED")){
+    SEED <- 123
+  }
+  set.seed(SEED)
   # --- 1.1. Start logs - append file
   sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
                        START = TRUE)

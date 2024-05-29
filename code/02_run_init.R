@@ -97,7 +97,7 @@ run_init <- function(FOLDER_NAME = "test_run",
                      N_BOOTSTRAP = 10,
                      CUT = 0.1,
                      PROJ_PATH = NULL){
-  set.seed(123)
+
   # --- 1. Initialize function
   # --- 1.1. Start logs - create file
   if(is.null(LOAD_FROM)){
