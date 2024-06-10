@@ -15,7 +15,7 @@
 query_bio_wrapper <- function(FOLDER_NAME = NULL,
                               SUBFOLDER_NAME = NULL){
   if(!exists("SEED")){
-    SEED <- 123
+    assign("SEED", 123, envir = .GlobalEnv)
   }
   set.seed(SEED)
   # --- 1. Initialize function
