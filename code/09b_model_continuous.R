@@ -48,9 +48,9 @@ model_continuous <- function(CALL,
     # --- 2.5. Select best hyper parameter set
     # Based on RMSE values per model run (rsq does not work with 0's)
     model_best <- model_res %>%
-      select_best("rmse")
+      select_best(metric="rmse")
     # Retrieve the corresponding RMSE as well
-    rmse_best <- model_res %>% show_best("rmse") %>% .[1,]
+    rmse_best <- model_res %>% show_best(metric="rmse") %>% .[1,]
     MODEL[[CALL$MODEL_LIST[i]]][["best_fit"]] <- rmse_best
 
     # --- 2.6. Define final workflow
