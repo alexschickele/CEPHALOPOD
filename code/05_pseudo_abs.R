@@ -174,16 +174,17 @@ pseudo_abs <- function(FOLDER_NAME = NULL,
     # --- 4.2.5. Additional Environmental distance (MESS)
     if(CALL$PA_ENV_STRATA == TRUE){
       env_strata <- dismo::mess(x = CALL$ENV_DATA[[as.numeric(m)]], v = QUERY$X)
-      env_strata[env_strata > 0] <- NA
+      env_strata <- synchroniseNA(stack(env_strata, CALL$ENV_DATA[[1]][[1]]))[[1]] # mess has values on all pixels, so we remove land
+      env_strata[env_strata > 0] <- 0 # 0 proba better than NA to avoid errors
       env_strata[env_strata == -Inf] <- min(env_strata[!is.na(env_strata) & env_strata != -Inf])
+      
       env_strata <- (env_strata*(-1)) %>% 
         rasterToPoints() %>% 
         as.data.frame()
       
       env_strata$mess <- env_strata$mess/max(env_strata$mess, na.rm = TRUE)
-      
-      background <- background %>% 
-        right_join(env_strata) # right join because the mess has a value on all pixels; background may have NA
+
+      background <- merge(background, env_strata, all.x = TRUE) # use merge instead of join to avoid parallel error
       if(ncol(background) == 4){
         background[,3] <- apply(background[,3:4], 1, function(x)(x = mean(x, na.rm = TRUE)))
         background <- background[,-4]

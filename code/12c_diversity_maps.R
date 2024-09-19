@@ -42,7 +42,9 @@ diversity_maps <- function(FOLDER_NAME = NULL,
     } else {
       return(NULL)
     } # if model list
-  }, mc.cores = round(MAX_CLUSTERS/2, 0)) %>% .[lengths(.) != 0]
+  }, mc.cores = round(MAX_CLUSTERS/2, 0), mc.preschedule = FALSE) %>% 
+    .[lengths(.) != 0] %>% 
+    .[grep("Error", ., invert = TRUE)] # to exclude any API error or else
   
   # --- 2.2. Loop over the files
   message(paste0(Sys.time(), "--- DIVERSITY: build the ensembles - loop over files"))
@@ -109,8 +111,12 @@ diversity_maps <- function(FOLDER_NAME = NULL,
   
   # --- 3. Compute habitat suitability - for the .nc in the shiny app.
   # --- 3.1. Across bootstrap for each month
-  a_m <- apply(all_ens, c(1,2,4), function(x)(x = mean(x, na.rm = T)))
-  a_sd <- apply(all_ens, c(1,2,4), function(x)(x = sd(x, na.rm = T)))
+  a_m <- mclapply(1:dim(all_ens)[1], function(i) {
+    apply(all_ens[i,,,], c(1,3), function(x) mean(x, na.rm = TRUE))
+  }, mc.cores = MAX_CLUSTERS) %>% abind(along = 3) %>% aperm(c(3,1,2))
+  a_sd <- mclapply(1:dim(all_ens)[1], function(i) {
+    apply(all_ens[i,,,], c(1,3), function(x) sd(x, na.rm = TRUE))
+  }, mc.cores = MAX_CLUSTERS) %>% abind(along = 3) %>% aperm(c(3,1,2))
   
   # --- 3.2. Add a 13th month: mean across the year
   mean_across_12_a_m_expanded <- array(apply(a_m, c(1, 2), function(x) mean(x, na.rm = TRUE)),

@@ -244,7 +244,7 @@ server <- function(input, output, session) {
         }
       } else {
         base_map %>%
-          addRasterImage(raster_map, colors = pal, opacity = 0.7) %>%
+          addRasterImage(raster_map, colors = pal, opacity = 0.7, project = FALSE) %>%
           # addRasterImage(land_raster, colors = 'black') %>%
           {
             if (!is.null(contours)) {
@@ -356,7 +356,7 @@ server <- function(input, output, session) {
       })
     } else {
       output$ensemble_plot <- renderPlot({
-        NULL  # Render nothing when data_type is not "Ensemble"
+        plot.new()  # Render nothing when data_type is not "Ensemble"
       })
     }
   })

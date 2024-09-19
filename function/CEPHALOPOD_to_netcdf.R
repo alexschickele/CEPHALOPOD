@@ -14,9 +14,7 @@
 #' Saved in FOLDERNAME.
 
 CEPHALOPOD_to_netcdf <- function(r0, a_m, a_sd, names, reco_list, output_file = "output_abundance_test.nc") {
-  library(RNetCDF)
-  library(raster)
-  
+
   MONTH <- as.list(1:13)
   nlon <- ncol(r0)  # Assuming r0 is defined elsewhere
   nlat <- nrow(r0)  # Assuming r0 is defined elsewhere
@@ -27,36 +25,27 @@ CEPHALOPOD_to_netcdf <- function(r0, a_m, a_sd, names, reco_list, output_file = 
   lon_values <- seq(-180, 180, length.out = nlon)
   lat_values <- seq(-90, 90, length.out = nlat)
   
-  # Create NetCDF file
-  nc_file <- create.nc(output_file)
-  
   # Define dimensions
-  dim.def.nc(nc_file, dimname = "longitude", nlon)
-  dim.def.nc(nc_file, dimname = "latitude", nlat)
-  dim.def.nc(nc_file, dimname = "time", ntime)  # Not unlimited
-  dim.def.nc(nc_file, dimname = "feature", nfeatures)
+  lon_dim <- ncdim_def(name = "longitude", units = "degrees_east", vals = lon_values)
+  lat_dim <- ncdim_def(name = "latitude", units = "degrees_north", vals = lat_values)
+  time_dim <- ncdim_def(name = "time", units = "months since 1970-01-01", vals = 1:ntime)
+  feature_dim <- ncdim_def(name = "feature", units = "", vals = 1:nfeatures)
   
-  # Define variables with float precision
-  var.def.nc(nc_file, varname = "longitude", vartype = "NC_FLOAT", dimensions = "longitude")
-  var.def.nc(nc_file, varname = "latitude", vartype = "NC_FLOAT", dimensions = "latitude")
-  var.def.nc(nc_file, varname = "time", vartype = "NC_FLOAT", dimensions = "time")
-  var.def.nc(nc_file, varname = "mean_values", vartype = "NC_FLOAT", dimensions = c("longitude", "latitude", "time", "feature"))
-  var.def.nc(nc_file, varname = "sd_values", vartype = "NC_FLOAT", dimensions = c("longitude", "latitude", "time", "feature"))
+  # Define variables
+  mean_var <- ncvar_def(name = "mean_values", units = "NA", dim = list(lon_dim, lat_dim, time_dim, feature_dim), missval = -9999, longname = "Mean Values")
+  sd_var <- ncvar_def(name = "sd_values", units = "NA", dim = list(lon_dim, lat_dim, time_dim, feature_dim), missval = -9999, longname = "Standard Deviation Values")
+  
+  # Create NetCDF file
+  nc_file <- nc_create(output_file, vars = list(mean_var, sd_var))
   
   # Add attributes
-  att.put.nc(nc_file, variable = "longitude", name = "units", type = "NC_CHAR", value = "degrees_east")
-  att.put.nc(nc_file, variable = "latitude", name = "units", type = "NC_CHAR", value = "degrees_north")
-  att.put.nc(nc_file, variable = "mean_values", name = "_FillValue", type = "NC_FLOAT", value = -9999)
-  att.put.nc(nc_file, variable = "mean_values", name = "long_name", type = "NC_CHAR", value = "Mean Values")
-  att.put.nc(nc_file, variable = "mean_values", name = "reco", type = "NC_CHAR", value = reco_list)
-  att.put.nc(nc_file, variable = "mean_values", name = "feature_names", type = "NC_CHAR", value = paste(names, collapse = ","))
-  att.put.nc(nc_file, variable = "sd_values", name = "_FillValue", type = "NC_FLOAT", value = -9999)
-  att.put.nc(nc_file, variable = "sd_values", name = "long_name", type = "NC_CHAR", value = "Standard Deviation Values")
-  att.put.nc(nc_file, variable = "time", name = "units", type = "NC_CHAR", value = "months since 1970-01-01")
+  ncatt_put(nc_file, "mean_values", "reco", reco_list)
+  ncatt_put(nc_file, "mean_values", "feature_names", paste(names, collapse = ","))
   
-  var.put.nc(nc_file, variable = "longitude", data = lon_values)
-  var.put.nc(nc_file, variable = "latitude", data = lat_values)
-  var.put.nc(nc_file, variable = "time", data = 1:ntime)
+  # Write coordinate data
+  ncvar_put(nc_file, "longitude", lon_values)
+  ncvar_put(nc_file, "latitude", lat_values)
+  ncvar_put(nc_file, "time", 1:ntime)
   
   # Write data to NetCDF
   for (i in 1:nfeatures) {
@@ -79,11 +68,12 @@ CEPHALOPOD_to_netcdf <- function(r0, a_m, a_sd, names, reco_list, output_file = 
       sd_values <- matrix(rsd_values, nrow = nlat, ncol = nlon, byrow = FALSE)
       
       # Write values to NetCDF variables
-      var.put.nc(nc_file, variable = "mean_values", data = mean_values, start = c(1, 1, m, i), count = c(nlon, nlat, 1, 1))
-      var.put.nc(nc_file, variable = "sd_values", data = sd_values, start = c(1, 1, m, i), count = c(nlon, nlat, 1, 1))
+      ncvar_put(nc_file, "mean_values", mean_values, start = c(1, 1, m, i), count = c(nlon, nlat, 1, 1))
+      ncvar_put(nc_file, "sd_values", sd_values, start = c(1, 1, m, i), count = c(nlon, nlat, 1, 1))
     }
   }
   
   # Close the NetCDF file
-  close.nc(nc_file)
+  nc_close(nc_file)
 }
+
