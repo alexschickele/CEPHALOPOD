@@ -1,1 +1,1 @@
-export PATH=/usr/include/pgsql:$PATH
+export PATH=$HOME/bin:$HOME/usr/bin:$HOME/usr/include/pgsql:$PATH
