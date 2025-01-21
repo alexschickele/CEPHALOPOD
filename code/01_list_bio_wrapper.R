@@ -1,100 +1,87 @@
 #' =============================================================================
 #' @name list_bio_wrapper
-#' @description wrapper around functions to list the available species within the
-#' different data types and access service sources.
-#' @param FOLDER_NAME name of the folder to create, corresponding to the run
-#' @param DATA_SOURCE type of data to query from : string among "occurrence" (i.e. OBIS data),
-#' "biomass" or "abundance" (i.e. AtlantECO data) or "MAG" (i.e. MATOU) data;
-#' this parameter can also be a string path to a custom input table (i.e. "custom")
-#' @param SAMPLE_SELECT list of sample selection criteria, including :
-#' MIN_SAMPLE : minimum number of geographical points to consider the selection (i.e. non-zero records)
-#' TARGET_MIN_DEPTH and TARGET_MAX_DEPTH: minimum and maximum depth levels in m (for target)
-#' FEATURE_MIN_DEPTH and FEATURE_MAX_DEPTH: minimum and maximum depth levels in m (for feature)
-#' START_YEAR and STOP_YEAR: start and stop years for the considered period
-#' @details For custom tables, the data table must contain the following columns and one row per sample :
-#' - scientificname : name of the taxa
-#' - worms_id : aphiaID corresponding to the taxa name. Fill with another identified if none is available or not relevant
-#' - decimallatitude : decimal, latitude of the sample (-90 to +90)
-#' - decimallongitude : decimal, longitude of the sample (-180 to +180)
-#' - depth : integer, depth of the sample
-#' - year : integer, year of sampling
-#' - measurementvalue : numeric or string (e.g. present)
-#' - measurementunit : information on the unit of the measurement
-#' - taxonrank : taxonomic ranking corresponding to the scientific name (e.g. species, gender, order...)
-#' @return for "occurrence", "abundance" and "biomass" data, returns a data frame with the number
-#' of occurrences per worms_ID available
-#' @return for "MAG" data, returns a complete list of metadata, samples, taxonomic
-#' annotations available.
-#' @return for custom data from file path, returns the formatted file in memory
-#' @return the returned object is saved in the run file to avoid re-running the query
+#' @description Wrapper function that handles different data types and services to list
+#' available species or taxonomic data, applying user-specified sample selection criteria.
+#' The function redirects to appropriate helper functions depending on the data source.
+#'
+#' @param FOLDER_NAME Name of the folder to create, corresponding to the run.
+#' @param DATA_SOURCE The type of data to query, which can be:
+#' "occurrence" (OBIS data), "biomass" or "abundance" (AtlantECO data), "MAG" (MATOU/MAG data),
+#' or a file path (e.g., "custom") for a user-provided dataset.
+#' @param SAMPLE_SELECT A list of sample selection criteria, including:
+#' - MIN_SAMPLE: Minimum number of geographical points required (i.e., non-zero records).
+#' - TARGET_MIN_DEPTH, TARGET_MAX_DEPTH: Minimum and maximum target depth (in meters).
+#' - FEATURE_MIN_DEPTH, FEATURE_MAX_DEPTH: Minimum and maximum feature depth (in meters).
+#' - START_YEAR, STOP_YEAR: Start and stop years for the sampling period.
+#'
+#' @details For custom tables, the data must contain specific columns (e.g., scientificname, worms_id, etc.).
+#' For other data sources, this function calls appropriate helper functions to retrieve and process data.
+#'
+#' @return Depending on the data source, this function returns:
+#' - For "occurrence", "abundance", or "biomass" data: A data frame with species occurrences.
+#' - For "MAG" data: A full list of metadata, samples, and taxonomic annotations.
+#' - For custom data: A formatted data frame based on the input file.
+#' The result is also saved in the specified folder to avoid re-running queries.
 
 list_bio_wrapper <- function(FOLDER_NAME = "test_run",
                              DATA_SOURCE = "biomass",
-                             SAMPLE_SELECT = list(MIN_SAMPLE = 50, MIN_DEPTH = 0, MAX_DEPTH = 50, START_YEAR = 1990, STOP_YEAR = 2016)){
-
-  # --- 1. Initialize
-  set.seed(123)
+                             SAMPLE_SELECT = list(MIN_SAMPLE = 50, TARGET_MIN_DEPTH = 0, TARGET_MAX_DEPTH = 50, START_YEAR = 1990, STOP_YEAR = 2016)){
   
-  # --- 1.1. Add default predictor depth range if not specified
-  if(is.null(SAMPLE_SELECT$FEATURE_MIN_DEPTH)){SAMPLE_SELECT$FEATURE_MIN_DEPTH <- SAMPLE_SELECT$TARGET_MIN_DEPTH}
-  if(is.null(SAMPLE_SELECT$FEATURE_MAX_DEPTH)){SAMPLE_SELECT$FEATURE_MAX_DEPTH <- SAMPLE_SELECT$TARGET_MAX_DEPTH}
-
-  # --- 1.1. Parameter checking
+  # --- 1. Initialization and setup
+  set.seed(123)  # Set seed for reproducibility
+  
+  # --- 1.1. Assign default feature depth range if not provided
+  if(is.null(SAMPLE_SELECT$FEATURE_MIN_DEPTH)) SAMPLE_SELECT$FEATURE_MIN_DEPTH <- SAMPLE_SELECT$TARGET_MIN_DEPTH
+  if(is.null(SAMPLE_SELECT$FEATURE_MAX_DEPTH)) SAMPLE_SELECT$FEATURE_MAX_DEPTH <- SAMPLE_SELECT$TARGET_MAX_DEPTH
+  
+  # --- 1.2. Parameter validation: Check that DATA_SOURCE is a character string
   if(!is.character(DATA_SOURCE)){
-    stop("The specified data source should be 'biomass', 'abundance', 'occurrence', 'MAG' or a path to file (.csv, .txt, .xlsx) for custom data")
+    stop("The data source should be one of 'biomass', 'abundance', 'occurrence', 'MAG', or a file path for custom data (e.g., .csv, .txt, .xlsx).")
   }
-
-  # --- 1.2. Folder creation
-  # If the directory exist, stops the creation and inform the user to manually delete the
-  # previous runs, or name the directory differently
-  folderpath <- paste0(project_wd,"/output/",FOLDER_NAME)
-  if(file.exists(folderpath)==TRUE){
-    stop("--- OVERWRITE ALARM: This foldername is already used. \n Please choose another FOLDER_NAME or delete the concerned folder")
+  
+  # --- 1.3. Folder creation for the run
+  # Construct the folder path based on the provided FOLDER_NAME
+  folderpath <- paste0(project_wd, "/output/", FOLDER_NAME)
+  
+  # If the folder already exists, stop the function to prevent overwriting
+  if(file.exists(folderpath)){
+    stop("--- OVERWRITE ALARM: This folder name is already used. \nPlease choose another FOLDER_NAME or delete the existing folder.")
   } else {
-    dir.create(folderpath)
+    dir.create(folderpath)  # Create the folder if it does not exist
   }
-
-  # --- 2. Redirection to OBIS data access
-  # For occurrence source data
+  
+  # --- 2. Data source redirection
+  # Depending on the data source type, call the appropriate function
+  
+  # --- 2.1. OBIS/GBIF (Occurrence) Data
   if(DATA_SOURCE == "occurrence"){
-
-    # --- 2.1. Run function
-    LIST_BIO <- list_occurrence(DATA_SOURCE = DATA_SOURCE,
-                                SAMPLE_SELECT = SAMPLE_SELECT)
-  } # End ATLANTECO redirection
-
-  # --- 3. Redirection to ATLANTECO data access
-  # For biomass or abundance source data
+    LIST_BIO <- list_occurrence(DATA_SOURCE = DATA_SOURCE, SAMPLE_SELECT = SAMPLE_SELECT)
+  }
+  
+  # --- 3. ATLANTECO (Biomass or Abundance) Data
   if(DATA_SOURCE == "biomass" | DATA_SOURCE == "abundance"){
-
-    # --- 3.1. Run function
-    LIST_BIO <- list_abundance_biomass(DATA_SOURCE = DATA_SOURCE,
-                                       SAMPLE_SELECT = SAMPLE_SELECT)
-  } # End ATLANTECO redirection
-
-  # --- 4. Redirection to MGNIFY data access
-  # For MAG source data
+    LIST_BIO <- list_abundance_biomass(DATA_SOURCE = DATA_SOURCE, SAMPLE_SELECT = SAMPLE_SELECT)
+  }
+  
+  # --- 4. MATOU (MAG) Data
   if(DATA_SOURCE == "MAG"){
-
-    # --- 4.1. Run function
     LIST_BIO <- list_MAG(SAMPLE_SELECT = SAMPLE_SELECT)
-  } # End MGNIFY redirection
-
-  # --- 5. Redirection to CUSTOM data access
-  # For any type of data
+  }
+  
+  # --- 5. Custom Data Access
+  # If the data source is not one of the predefined types, assume it is a file path for custom data.
   if(DATA_SOURCE != "MAG" & DATA_SOURCE != "biomass" & DATA_SOURCE != "abundance" & DATA_SOURCE != "occurrence"){
-
-    # --- 5.1. Run function
-    LIST_BIO <- list_custom(DATA_SOURCE = DATA_SOURCE,
-                            SAMPLE_SELECT = SAMPLE_SELECT,
-                            FOLDER_NAME = FOLDER_NAME)
-  } # End MGNIFY redirection
-
-  # --- 6. Wrap up and save
-  CALL <- list(DATA_SOURCE = DATA_SOURCE,
-               SAMPLE_SELECT = SAMPLE_SELECT,
-               LIST_BIO = LIST_BIO)
-  save(CALL, file = paste0(project_wd,"/output/", FOLDER_NAME, "/CALL.RData"))
+    LIST_BIO <- list_custom(DATA_SOURCE = DATA_SOURCE, SAMPLE_SELECT = SAMPLE_SELECT, FOLDER_NAME = FOLDER_NAME)
+  }
+  
+  # --- 6. Wrap up and save the result
+  # Create a list object to store the data source, sample selection criteria, and result (LIST_BIO)
+  CALL <- list(DATA_SOURCE = DATA_SOURCE, SAMPLE_SELECT = SAMPLE_SELECT, LIST_BIO = LIST_BIO)
+  
+  # Save the result in the specified folder to avoid re-running the query in future runs
+  save(CALL, file = paste0(project_wd, "/output/", FOLDER_NAME, "/CALL.RData"))
+  
+  # Return the list of biological data (LIST_BIO)
   return(CALL$LIST_BIO)
-
+  
 } # END FUNCTION

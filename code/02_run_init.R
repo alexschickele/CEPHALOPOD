@@ -1,75 +1,75 @@
 #' =============================================================================
 #' @name run_init
-#' @description (1) initialize an output folder corresponding to the run call (i.e., species
-#' and selection criteria) in which the output will be saved.
-#' @description (2) initialize all parameters of the run and stores them in
-#' a CALL object
-
-#' @param FOLDER_NAME name of the run folder we want to work in
-#' @param SP_SELECT vector of IDs, corresponding to the species to parallelize on
-#' @param FAST TRUE or FALSE; if TRUE, does not compute projections and plot for algorithms
-#' that did not pass the Quality Checks
-#' @param LOAD_FROM load a previous list_bio object from another folder to be
-#' duplicated in the new FOLDER_NAME. It avoids re-doing the initial list_bio step
-#' that can be long for MAGs data
-
-#' @param SP_SELECT species to run the analysis for, in form of Aphia ID for traditional data
-#' and OTU ID for MAGs - updated if WORMS_CHECK = TRUE
-#' @param WORMS_CHECK check for the WoRMS taxonomic backbone and updates SP_SELECT accordingly
-#' @param DATA_TYPE the output type of the data, which can influence the sub-folder
-#' architecture. See details.
+#' @description Initializes the output directory and parameters for a run. 
+#' 1. Creates an output folder corresponding to the current run (based on species 
+#' and selection criteria) where results will be stored.
+#' 2. Initializes all parameters required for the run and saves them in a CALL object.
 #' 
-#' @param ENV_VAR a list of .nc files to extract the main variable from, located in ENV_PATH
-#' @param ENV_PATH string or vector of path to the root where the .nc are.
-#' @param METHOD_PA method of pseudo-absence, either "mindist" or "cumdist" or "density"
-#' @param NB_PA number of pseudo-absences to generate
-#' @param DIST_PA if METHOD_PA = "mindist", distance from presences (in meters),
-#'  from which to define the background data. Expert use only.
-#' @param BACKGROUND_FILTER alternative background filter for finer tuning, such
-#' as selecting pseudo-absences within the sampled background of a given campaign
-#' or instrument deployment. Passed by the user in the form of a 2 column 
-#' data frame, x = longitude and y = latitude where the pseudo-absences
-#' can be sampled. Or a path to a raster object where pseudo-absences are sampled in
-#' non NA cells, weighted by the cell values.
-#' @param PER_RANDOM ratio of pseudo-absences that are sampled randomly in the background
-#'  - in addition to the background choice
-#' @param PA_ENV_STRATA pseudo absences are also sampled in environmentally distinct cells from 
-#' the presences using a mess analysis - in addition to the background choice
+#' @param FOLDER_NAME A string representing the name of the run folder to be used.
+#' @param SP_SELECT A vector of IDs for the species targeted for parallel processing.
+#' @param FAST Boolean - Projections and plots are not computed for algorithms that 
+#' do not pass the Quality Checks.
+#' @param LOAD_FROM A string indicating the path to a previous list_bio object from 
+#' another folder. This avoids redoing the lengthy initial list_bio step.
+#' 
+#' @param SP_SELECT A vector of species identifiers (e.g., Aphia ID for traditional 
+#' data - updated if WORMS_CHECK is set to TRUE.
+#' @param WORMS_CHECK Boolean - matches SP_SELECT against the WoRMS taxonomy.
+#' 
+#' @param DATA_TYPE Type of output data, influencing the sub-folder structure and function
+#' triggered. Either "presence_only", "continuous" or "proportions".
+#' 
+#' @param ENV_VAR A list of .nc filenames to extract the environmental features from.
+#' @param ENV_PATH A string or vector indicating the path to the root directory where 
+#' the .nc files are located.
+#' 
+#' @param METHOD_PA Method for generating pseudo-absences: "mindist", "cumdist", 
+#' or "density".
+#' @param NB_PA The number of pseudo-absences to generate.
+#' @param DIST_PA If METHOD_PA is "mindist", the distance (in meters) from presences 
+#' used to define background data (for expert use only).
+#' @param BACKGROUND_FILTER A data frame (2 columns: longitude and latitude) or a path 
+#' to a raster object to sample pseudo-absences from environmentally distinct cells. 
+#' This filter allows finer tuning for pseudo-absence selection.
+#' @param PER_RANDOM The proportion of pseudo-absences sampled randomly in addition 
+#' to the specified background.
+#' @param PA_ENV_STRATA Pseudo-absences are sampled from environmentally distinct 
+#' cells relative to presences using a mess analysis, in addition to the background choice.
+#' 
+#' @param OUTLIER Boolean - Biological outliers will be removed in the target.
+#' @param RFE Boolean - Performs recursive feature elimination for predictor pre-selection.
+#' @param ENV_COR A numeric threshold for removing correlated environmental features from 
+#' QUERY objects and CALL. If NULL, no removal occurs.
+#' 
+#' @param NFOLD An integer specifying the number of folds to train each algorithm.
+#' @param FOLD_METHOD A method for creating folds - either random split "kfold" 
+#' or longitudinal split "lon".
+#' 
+#' @param MODEL_LIST A list of algorithms to train.
+#' @param LEVELS The hyperparameter grid size for each parameter.
+#' @param TARGET_TRANSFORMATION A path to a function(x, REVERSE = T/F) for transforming 
+#' the target variable. Useful for left-skewed distribution in the target.
+#' 
+#' @param ENSEMBLE Boolean - Computes an ensemble during evaluation and projection steps.
+#' @param N_BOOTSTRAP The number of bootstrap iterations for projections and partial 
+#' dependency plots.
+#' 
+#' @param CUT A numeric value or NULL; if numeric, specifies the quantile (0 to 1) 
+#' at which projections are considered zero. Projections without observations are excluded.
+#' It avoids projecting hotspots in geographical areas non-connected to observed distribution.
+#' 
+#' @details Various data transformations between DATA_SOURCE and DATA_TYPE include:
+#' - "occurrence" to "presence_only" (default; not recommended for > 50 targets)
+#' - "biomass" or "abundance" to "continuous" (default; not recommended for > 50 targets)
+#' - "biomass" or "abundance" to "proportions" (not recommended if sampling stations differ)
+#' - "MAG" to "proportions" (default; not recommended for > 50 targets)
+#' - "MAG" to "continuous" represented as Shannon-diversity
+#' - "MAG" to "presence_only" represented as presence-only
+#' 
+#' @return Creates a subfolder for each species in SP_SELECT and returns a vector of 
+#' sub-directory names for subsequent parallel computing.
+#' @return Saves all global parameters in a CALL.RData object.
 
-
-#' @param OUTLIER if TRUE, remove outliers
-#' @param RFE if true, performs a recursive feature exclusion predictor pre-selection
-#' @param ENV_COR numeric, removes the correlated environmental values from the
-#' query objects and CALL according to the defined threshold. Else NULL.
-
-#' @param NFOLD number of folds, used defined integer
-#' @param FOLD_METHOD method used to create the folds, integer between "kfold"
-#' and "lon"
-
-#' @param MODEL_LIST list of algorithms from which to compute hyperparameter
-#' selection
-#' @param LEVELS maximum number of parameter values to test in each of the grids
-#' @param TARGET_TRANSFORMATION path to a function(x, REVERSE = T/F) to transform the target variable
-
-#' @param ENSEMBLE TRUE or FALSE; if TRUE, computes an ensemble at the evaluation and projection steps
-#' @param N_BOOTSTRAP number of bootstrap to do for the projections and partial dependency plots
-#' @param CUT numeric or NULL; if numeric, quantile (between 0 and 1) at which the projections are considered to be 0 
-#' Projection patches without observation are then removed.
-#' @param PROJ_PATH (optional) path to a environmental raster, potentially 
-#' different than the one given in the QUERY object. This is the case for 
-#' supplementary projections in other time and climate scenarios for example. 
-#' To your own risk and only for expert users !
-
-#' @details Different data transformation between DATA_SOURCE and DATA_TYPE are implemented, including:
-#' - "occurrence" to "presence_only" (default)
-#' - "biomass" or "abundance" to "continuous" (default, not recommended for more than 50 targets)
-#' - "biomass" or "abundance" to "proportions" (not recommended if the sampling stations are not the same)
-#' - "MAG" to "proportions" (default, not recommended for more than 50 targets)
-#' - "MAG" to "continuous" in form of richness
-#' - "MAG" to "presence_only" in form of presence-only
-#' @return creates one subfolder per SP_SELECT and a vector of sub-directories names 
-#' used as an argument for parallel computing later
-#' @return all global parameters in a CALL.RData object
 
 run_init <- function(FOLDER_NAME = "test_run",
                      SP_SELECT = NULL,
@@ -92,16 +92,16 @@ run_init <- function(FOLDER_NAME = "test_run",
                      FOLD_METHOD = "lon",
                      MODEL_LIST = c("GLM","GAM","RF","MLP","SVM","BRT"),
                      LEVELS = 3,
-                     TARGET_TRANSFORMATION = "/net/meso/work/aschickele/Bluecloud_WB_local/function/target_transformation_yj_auto.R",
+                     TARGET_TRANSFORMATION = NULL,
                      ENSEMBLE = TRUE,
                      N_BOOTSTRAP = 10,
-                     CUT = 0.1,
-                     PROJ_PATH = NULL){
+                     CUT = NULL){
   
-  # --- 1. Initialize function
-  set.seed(123)
+  # --- 1. Initialization and setup
+  set.seed(123)  # Set seed for reproducibility
   
   # --- 1.1. Start logs - create file
+  # Create a log file to save all text output during the run
   if(is.null(LOAD_FROM)){
     sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME, "/log.txt"), open = "wt"),
                          START = TRUE)
@@ -134,56 +134,56 @@ run_init <- function(FOLDER_NAME = "test_run",
     } # if exists
   } # if LOAD_FROM
   
-  # --- 3. Check the taxonomic assignation
+  # --- 3. Check the taxonomic assignation - WORMS_CHECK
   # Only if TRUE and data_source != proportions // you may want to turn it off if the data are not adapted (e.g., functional, MAGs)
-  # --- 3.1. Initialize object
-  SP_SELECT_INFO <- NULL # if FALSE stays like this
-  SP_SELECT <- SP_SELECT[!is.na(SP_SELECT)] # remove NA from the list
   
-  if(WORMS_CHECK == TRUE & CALL$DATA_SOURCE != "MAG"){
-    message("WORMS_CHECK: TRUE - checking for taxonomic unnaccepted names and synonyms against the WoRMS taxonomic backbone \n")
-    # --- 3.2. Extract worms information from the SP_SELECT
-    SP_SELECT <- as.numeric(SP_SELECT) # numeric for worms ID
-    SP_SELECT_INFO <- lapply(SP_SELECT, function(x){
-      out = worms_check(ID = x, MARINE_ONLY = TRUE)
-    })
-    SP_SELECT_INFO <- SP_SELECT_INFO[lengths(SP_SELECT_INFO) > 0] # filter out unnaccepted names
+  # --- 3.1. Initialize object
+  SP_SELECT_INFO <- NULL # Initialize as NULL; it will store info on species if WORMS_CHECK is TRUE
+  SP_SELECT <- SP_SELECT[!is.na(SP_SELECT)] # Remove NA values from SP_SELECT
+  
+  # Check if WORMS_CHECK is enabled and the data source is not "MAG"
+  if (WORMS_CHECK && CALL$DATA_SOURCE != "MAG") {
+    message("WORMS_CHECK: TRUE - checking for taxonomically unaccepted names and synonyms against the WoRMS taxonomic backbone\n")
+    
+    # --- 3.2. Extract WoRMS information from SP_SELECT
+    SP_SELECT <- as.numeric(SP_SELECT) # Convert SP_SELECT to numeric for worms ID compatibility
+    SP_SELECT_INFO <- lapply(SP_SELECT, function(x) worms_check(ID = x, MARINE_ONLY = TRUE))
+    
+    # Filter out unaccepted names (keep only non-empty results)
+    SP_SELECT_INFO <- SP_SELECT_INFO[lengths(SP_SELECT_INFO) > 0] 
     
     # --- 3.3. Identify duplicates
-    duplicates <- duplicated(sapply(SP_SELECT_INFO, "[[", "VALID")) %>% which(. == TRUE)
-    valid_id <- lapply(SP_SELECT_INFO, function(x){x <- x$VALID}) %>% unlist()
-    duplicates_id <- which(valid_id %in% valid_id[duplicates])
+    valid_ids <- sapply(SP_SELECT_INFO, function(x) x$VALID) # Extract valid names
+    duplicates <- duplicated(valid_ids) # Identify duplicates
+    duplicates_indices <- which(duplicates) # Indices of duplicate entries
     
     # --- 3.4. Merge the duplicates
-    if(length(duplicates_id) > 0){
-      while(length(duplicates_id) > 0) {
+    if (length(duplicates_indices) > 0) {
+      while (length(duplicates_indices) > 0) {
         # --- 3.4.1. Find indices of duplicated VALID vector
-        # indices <- which(sapply(SP_SELECT_INFO, function(x) all(x$VALID == SP_SELECT_INFO[[i]]$VALID)) == TRUE)
-        
-        indices <- which(valid_id == valid_id[duplicates_id])
-        message(paste("WORMS: subfolder", paste(valid_id[indices], collapse = " & "), "are a dupplicates - merging it"))
+        indices <- which(valid_ids == valid_ids[duplicates_indices[1]]) # Find all indices of the first duplicate
+        message(paste("WORMS: subfolder", paste(valid_ids[indices], collapse = " & "), "are duplicates - merging them"))
         
         # --- 3.4.2. Merge SYNONYM into the first element of indices
-        SP_SELECT_INFO[[indices[1]]]$SYNONYM <- unlist(sapply(indices, function(idx) SP_SELECT_INFO[[idx]]$SYNONYM)) %>% as.vector() %>% unique()
-        SP_SELECT_INFO[indices[-1]] <- NA
+        SP_SELECT_INFO[[indices[1]]]$SYNONYM <- unique(c(SP_SELECT_INFO[[indices[1]]]$SYNONYM, unlist(lapply(indices, function(idx) SP_SELECT_INFO[[idx]]$SYNONYM))))
         
-        # --- 3.4.3. Update duplicates_id
-        duplicates_id <- duplicates_id[-indices]
+        # --- 3.4.3. Remove merged entries
+        SP_SELECT_INFO[indices[-1]] <- NULL # Use NULL instead of NA to free up memory
         
+        # --- 3.4.4. Update duplicates_indices
+        duplicates_indices <- duplicates_indices[duplicates_indices != indices[-1]] # Remove processed duplicates
       } # end while
-    } # if duplicates
-    
-    SP_SELECT_INFO <- SP_SELECT_INFO[!is.na(SP_SELECT_INFO)] # filter out old duplicates names
+    } # end if duplicates
     
     # --- 3.5. Add nice names and update SP_SELECT
-    names(SP_SELECT_INFO) <- lapply(SP_SELECT_INFO, function(x)(x = x[["VALID"]]))
-    SP_SELECT <- names(SP_SELECT_INFO)
+    names(SP_SELECT_INFO) <- sapply(SP_SELECT_INFO, function(x) x[["VALID"]]) # Set names based on VALID names
+    SP_SELECT <- names(SP_SELECT_INFO) # Update SP_SELECT to contain valid names
   } # end if
   
   # --- 4. Create species sub-directories
-  # Named by their Worms ID, OTU ID, or named proportion or richness depending on
-  # the data source and type. Contains a QUERY object with the corresponding
-  # species selection to consider in each sub folder.
+  # Named by the content of the "worms_id" column OR "proportions" OR "shannon" if relevant. 
+  # Contains a QUERY object with the corresponding species selection to consider in each sub folder.
+  
   if(DATA_TYPE == "proportions"){
     dir.create(paste0(out_path, "/proportions"))
     QUERY <- list(SUBFOLDER_INFO = list(SP_SELECT = SP_SELECT))
@@ -201,63 +201,82 @@ run_init <- function(FOLDER_NAME = "test_run",
   } # if DATA_TYPE and SOURCE
   
   # --- 5. Extract environmental raster from NCDF
-  # --- 5.1. Get the list of files
-  list_nc <- list.files(ENV_PATH) %>% 
-    .[grep(pattern = ".nc", x = .)]
+  # --- 5.1. Get the list of files from the ENV_PATH
+  list_nc <- list.files(ENV_PATH, pattern = "\\.nc$", full.names = TRUE)
   
-  # --- 5.2. Get the list of variables
-  var_out <- ENV_VAR %>% .[grep("!", . , invert = FALSE)] %>% gsub("!", "", .)
-  var_in <- ENV_VAR %>% .[grep("!", . , invert = TRUE)]
+  # --- 5.2. Get the list of variables to include and exclude
+  var_out <- grep("!", ENV_VAR, value = TRUE) %>% gsub("!", "", .)
+  var_in <- grep("!", ENV_VAR, value = TRUE, invert = TRUE)
   
-  var_all <- str_sub(list_nc, 1, -4)
-  if(length(var_in) != 0){var_all <- var_all[var_all %in% var_in]}
-  if(length(var_out) != 0){var_all <- var_all[!c(var_all %in% var_out)]}
-  ENV_VAR <- var_all
+  # Determine which variables to keep
+  ENV_VAR <- sub("\\.nc$", "", basename(list_nc))
+  if (length(var_in) > 0) ENV_VAR <- ENV_VAR[ENV_VAR %in% var_in]
+  if (length(var_out) > 0) ENV_VAR <- ENV_VAR[!ENV_VAR %in% var_out]
   
   # --- 5.3. Provide a list per month, containing raster stack of all variables
-  # Add plot of the native predictor distribution
-  ENV_DATA <- list()
-  pdf(paste0(project_wd,"/output/",FOLDER_NAME,"/Available_predictors.pdf"))
+  # Also plot the native predictor distribution for each variable
   
-  for(m in 1:12){
-    # --- 5.3.1. Extract the data from the .nc files
-    stack_month <- lapply(paste0(ENV_PATH, "/", ENV_VAR, ".nc"), 
-                          FUN = function(x){x = nc_to_raster(MONTH = m,
-                                                             NC = x,
-                                                             MIN_DEPTH = CALL$SAMPLE_SELECT$FEATURE_MIN_DEPTH,
-                                                             MAX_DEPTH = CALL$SAMPLE_SELECT$FEATURE_MAX_DEPTH)
-                          }) 
-    dim_info <- lapply(stack_month, FUN = function(x)(x = x[[2]])) %>% 
-      lapply(FUN = function(x)(x = paste0(names(x), "(", x, ")")) %>% paste(collapse = " ; "))
-    stack_month <- lapply(stack_month, FUN = function(x)(x = x[[1]])) %>% 
-      raster::stack()
+  ENV_DATA <- vector("list", 12)
+  pdf(paste0(project_wd, "/output/", FOLDER_NAME, "/Available_predictors.pdf"))
+  par(mfrow = c(4,2), oma = c(0,0,2,0))
+  
+  for (m in 1:12) {
+    # --- 5.3.1. Extract data from the .nc files using nc_to_raster (now with terra)
+    stack_month <- lapply(list_nc[str_detect(list_nc,paste(ENV_VAR,collapse="|"))], 
+                          function(x) {
+                            result <- nc_to_raster(MONTH = m,
+                                                   NC = x,
+                                                   MIN_DEPTH = CALL$SAMPLE_SELECT$FEATURE_MIN_DEPTH,
+                                                   MAX_DEPTH = CALL$SAMPLE_SELECT$FEATURE_MAX_DEPTH)
+                            return(result)
+                          })
     
-    # --- 5.3.2. Pretty names
+    # Extract dimension information
+    dim_info <- lapply(stack_month, function(x) {
+      paste0(names(x[[2]]), "(", x[[2]], ")") %>% paste(collapse = " ; ")
+    })
+    
+    # Extract the actual raster from the nc_to_raster output
+    stack_month <- lapply(stack_month, function(x) x[[1]])
+    
+    # Convert list of SpatRasters to a SpatRaster collection (equivalent to stack in raster)
+    stack_month <- rast(stack_month)
+    
+    # --- 5.3.2. Assign proper names to the raster layers
     names(stack_month) <- ENV_VAR
     
-    # --- 5.3.3. Plot native range in a PDF
-    # Enables user to see if one variables has a very different range than others
-    raster::plot(stack_month, main = paste(names(stack_month), "\n month n°:", m, "-", unlist(dim_info)), 
-         cex.main = 0.8, col = viridis_pal(100), nr = 4, nc = 2)
+    # --- 5.3.3. Plot the native range in a PDF
+    # Enables the user to see if one variable has a very different range than others
+    # Loops over each variable to ensure all are plotted by the terra library
+    for(f in 1:nlyr(stack_month)){
+      plot(stack_month[[f]], main = paste(names(stack_month)[f], "\n month n°:", m, "-", unlist(dim_info)),
+           col = viridis::viridis(100), cex.main = 0.6) 
+    } # end f feature layer loop
     
-    # --- 5.3.4. SynchroniseNA across predictors - and assign to list
+    # --- 5.3.4. Synchronize NAs across predictors and assign to list
     ENV_DATA[[m]] <- synchroniseNA(stack_month)
     message(paste(Sys.time(), "--- ENV. STACK : month", m, "done \t"))
-  } # end month loop
+  }  # End month loop
+  
   dev.off()
   
-  # --- 5.4. SynchroniseNA across month
-  # --- 5.4.1. Extract the base layer of each month
-  base_r <- lapply(ENV_DATA, FUN = function(x)(x = x[[1]])) %>% 
-    raster::stack() %>% 
+  # --- 5.4. Synchronize NAs across months
+  # --- 5.4.1. Extract the base layer (first raster of each month)
+  base_r <- lapply(ENV_DATA, function(x) x[[1]]) %>% 
+    rast() %>% 
     synchroniseNA() %>% 
     .[[1]]
-  base_r <- base_r/base_r
   
-  # --- 5.4.2. Multiply each month stack by the base
-  ENV_DATA <- lapply(ENV_DATA, FUN = function(x){x = x*base_r
-                                                 names(x) = ENV_VAR
-                                                 return(x)})
+  # Normalize base raster to be used for NA alignment
+  base_r <- base_r / base_r
+  
+  # --- 5.4.2. Multiply each monthly stack by the base raster to align NAs
+  ENV_DATA <- lapply(ENV_DATA, function(x) {
+    x <- x * base_r  # Apply the normalization
+    names(x) <- ENV_VAR  # Ensure layer names are preserved
+    x <- terra::wrap(x) # Ensure that we can save it in a RData file
+    return(x)
+  })
   
   # --- 6. Update CALL object
   # --- 6.1. Append CALL with ENV_DATA
@@ -275,10 +294,8 @@ run_init <- function(FOLDER_NAME = "test_run",
   CALL[["FAST"]] <- FAST
   CALL[["ENV_VAR"]] <- ENV_VAR
   CALL[["ENV_PATH"]] <- ENV_PATH
-  CALL[["METHOD_PA"]] <- METHOD_PA
   CALL[["NB_PA"]] <- NB_PA
   CALL[["PER_RANDOM"]] <- PER_RANDOM
-  CALL[["DIST_PA"]] <- DIST_PA
   CALL[["BACKGROUND_FILTER"]] <- BACKGROUND_FILTER
   CALL[["PA_ENV_STRATA"]] <- PA_ENV_STRATA
   CALL[["OUTLIER"]] <- OUTLIER
@@ -292,7 +309,6 @@ run_init <- function(FOLDER_NAME = "test_run",
   CALL[["ENSEMBLE"]] <- ENSEMBLE
   CALL[["N_BOOTSTRAP"]] <- N_BOOTSTRAP
   CALL[["CUT"]] <- CUT
-  CALL[["PROJ_PATH"]] <- PROJ_PATH
   
   # --- 7. Wrap up and save
   # --- 7.1. Save file(s)

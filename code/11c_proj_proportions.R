@@ -13,8 +13,8 @@ proj_proportions <- function(QUERY,
 
   # --- 1. Initialize function
   # --- 1.1. Open base raster and values
-  r0 <- CALL$ENV_DATA[[1]][[1]]
-  r_val <- getValues(r0)
+  CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::rast(x)) # Unpack the rasters first
+  r0 <- CALL$ENV_DATA[[1]][[1]] # Base raster 
 
   # --- 1.2. Early stop function if model did not pass QC and fast = TRUE
   if(CALL$FAST == TRUE & (length(MODEL$MODEL_LIST) == 0)){
@@ -26,11 +26,8 @@ proj_proportions <- function(QUERY,
   source_python(paste0(project_wd,"/function/mbtr_function.py"))
 
   # --- 2. Define bootstraps
-  # --- 2.1. Re-assemble all query tables
-  tmp <- cbind(QUERY$Y, QUERY$X, QUERY$S)
-
-  # --- 2.2. Run the bootstrap generation from tidy models
-  boot_split <- bootstraps(tmp, times = CALL$N_BOOTSTRAP)
+  # Run the bootstrap generation from tidy models
+  boot_split <- bootstraps(cbind(QUERY$Y, QUERY$X), times = CALL$N_BOOTSTRAP)
 
   # --- 3. Fit model on bootstrap
   # --- 3.1. Extract bootstrap input
@@ -51,6 +48,9 @@ proj_proportions <- function(QUERY,
       dplyr::select(as.character(CALL$SP_SELECT))
     write_feather(Y_val, paste0(project_wd, "/data/MBTR_cache/", b, "_Y_val.feather"))
   } # for b
+  
+  rm(X_tr, Y_tr, X_val, Y_val) # Intermediate memory cleanup
+  gc()
 
   # --- 3.2. Fit model
   # --- 3.2.1. Load .py functions & instance
@@ -89,11 +89,8 @@ proj_proportions <- function(QUERY,
   for(m in 1:length(CALL$ENV_DATA)){
 
     # --- 4.1. Load the right features
-    features <- CALL$ENV_DATA[[m]] %>%
-      raster::subset(QUERY$SUBFOLDER_INFO$ENV_VAR) %>%
-      rasterToPoints() %>%
-      as.data.frame() %>%
-      dplyr::select(-c(x, y))
+    features <- terra::subset(CALL$ENV_DATA[[m]], QUERY$SUBFOLDER_INFO$ENV_VAR) %>% 
+      terra::as.data.frame()
 
     # --- 4.2. Computing one prediction per bootstrap
     library(reticulate)
@@ -109,16 +106,19 @@ proj_proportions <- function(QUERY,
       abind(along = 3)
 
     # --- 4.3. Assign the desired values to the non-NA cells in the list
-    tmp <- apply(boot_proj, c(2,3), function(x){
-      r <- r_val
+    boot_proj <- apply(boot_proj, c(2,3), function(x){
+      r <- terra::values(r0) # Base raster values
       r[!is.na(r)] <- x
       x <- r
     }) %>%
       aperm(c(1,3,2))
 
     # --- 4.4. Concatenate with previous month
-    y_hat <- abind(y_hat, tmp, along = 4)
+    y_hat <- abind(y_hat, boot_proj, along = 4)
     message(paste("--- PROJ : month", m, "done \t"))
+    
+    rm(boot_proj, features)
+    gc()
   } # for m month
 
   # --- 6. Compute the average CV across bootstrap runs as a QC

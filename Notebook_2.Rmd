@@ -1,0 +1,431 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Introduction
+
+In the present [R Markdown](http://rmarkdown.rstudio.com) Notebook, we show an application of CEPHALOPOD to derive a spatial projection of Coccolitrophore diversity from omics' data using both a predict first - assemble later and an assemble first - predict later method.
+
+Please refer to the method section of the manuscript, or the code description for additional technical documentation. As we will run CEPHALOPOD twice in this notebook, the code chunk description are kept to the minimum, please refer to the notebook 1 for more details and explanations of each code chunk.
+
+To execute the notebook, click to the Run button within each code chunk, or place your cursor inside it and press *Ctrl+Shift+Enter*. Results will appear beneath the code chunk.
+
+## Installing CEPHALOPOD
+
+1.  Download the CEPHALOPOD code as provided in the code availability statement and decompress the archive in the designated installation path.
+2.  Initiate an R session (version 4.4 or above) on your local machine or computing cluster. We recommend a LINUX environment, 8 cores and 32 Gb of memory for a general usage across most case studies.
+3.  Navigate to the file located at: `./code/00_config.R`
+4.  Execute the R library installation commands line by line and respond affirmatively to interactive prompts. Ensure that all necessary libraries and corresponding versions are correctly installed.
+
+## Initialize both CEPHALOPOD runs
+
+To avoid any conflict with previous computations, we first reset the current R session. Then, we define the working directory, the CEPHALOPOD instance names for each run and load necessary libraries or functions.
+
+```{r}
+
+# Clean the memory and open connections:
+rm(list=ls())
+closeAllConnections()
+
+# Define your working directory. This should correspond to your CEPHALOPOD installation path:
+setwd("./CEPHALOPOD")
+
+# Load the necessary libraries and functions:
+source(file = "./code/00_config.R")
+
+# Give a name to your CEPHALOPOD run:
+run_name1 <- "notebook2_assemble_first"
+run_name2 <- "notebook2_predict_first"
+```
+
+## Run the assemble first - predict later method
+
+We start our example by requesting the Metagenome Assembled Genomes (MAG; data retrieved from DNA sequencing) matching a set of pre-defined criteria. In our case, we are interested by taxa with more than 50 occurrences available within a 0 to 300m depth range (i.e., corresponding to the water column of the continental shelf) and the 1990 to present period. This data can be requested from the `DATA_SOURCE = "MAG"` option. However, for the sake of time it is already pre-loaded and the shannon has been computed in a `.csv` file.
+
+```{r}
+# --- 1. List the available species
+# Within the user defined selection criteria
+
+# Request database for available MAG data:
+list_bio <- list_bio_wrapper(FOLDER_NAME = run_name1, # we will dupplicate to run_name2 later
+                             DATA_SOURCE = "./data/notebook2_assemble_first.csv",
+                             SAMPLE_SELECT = list(MIN_SAMPLE = 50, 
+                                                  TARGET_MIN_DEPTH = 0, TARGET_MAX_DEPTH = 130,
+                                                  START_YEAR = 1990, STOP_YEAR = 2024))
+
+# This object reports on the available data per taxa:
+head(list_bio)
+```
+
+In our example, we will focus on the Coccolithophores. We subset the list_bio object to extract all MAGs corresponding to the taxonomic class of *Prymnesiophyceae*. Note that a list of several species can also be given as a character string vector.
+
+```{r}
+
+# Extract the ID pre-computed in list_bio:
+sp_list <- list_bio %>%
+  dplyr::select(worms_id) %>% 
+  unique() %>% pull() %>% .[!grepl("No match", .)]
+
+# Print
+print(sp_list)
+```
+
+Now that we defined the target(s), we initialize the CEPHALOPOD run for the assemble first approach. As explained in Notebook 1, the parameters are defined in this function and used throughout the data pre-processing and modelling steps, without further change. Please read the function description or technical documentation for an exhaustive parameter list. The most important parameter in our example are mentionned below:
+
+-   `DATA_TYPE`: to treat MAGs as assemble-first diversity estimate, we set the data type to "continuous" which will compute a shannon diversity index as target variable at each observation points. Note that this is already pre-computed in the `.csv` file, however the procedure would identical when requesting from the database directly.
+
+All user-defined parameters are saved in the `CALL.RData` object for traceback and one folder is created for each considered target taxa. All subsequent pre-processing and modelling steps are parallelized over the considered target taxa and do not require user-interactions.
+
+```{r}
+
+# --- 2. Create the output folder, initialize parallelisation and parameters
+# (1) Create an output folder containing all species-level runs, (2) Stores the 
+# global parameters in an object, (3) Builds a local list of monthly raster
+env_path <- NULL # replace by local path to environmental predictors
+env_var <- NULL # take all
+
+subfolder_list <- run_init(FOLDER_NAME = run_name1,
+                           SP_SELECT = sp_list,
+                           WORMS_CHECK = FALSE, # not available for omics
+                           FAST = TRUE,
+                           DATA_TYPE = "continuous",
+                           ENV_VAR = env_var,
+                           ENV_PATH = env_path)
+```
+
+All pre-processing and modelling steps of CEPHALOPOD are detailed in the example given in notebook 1. Therefore, in this notebook 2, we will run the assemble first approach in one code chunk, as it does not require user interactions. A comparison between both diversity estimation approaches will be given after completing the CEPHALOPOD runs.
+
+```{r}
+
+
+# --- 3. Query biological data
+# Get the biological data of the species we wish to model
+mcmapply(FUN = query_bio_wrapper,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 4. Query environmental data
+# This functions returns an updated subfolder_list object to avoid computing
+# species with less than the user defined minimum occurrence number
+subfolder_list <- mcmapply(FUN = query_env,
+                  FOLDER_NAME = run_name1,
+                  SUBFOLDER_NAME = subfolder_list,
+                  mc.cores = min(length(subfolder_list), MAX_CLUSTERS), mc.preschedule = FALSE) %>% 
+  unlist() %>% 
+  na.omit(subfolder_list) %>% 
+  .[grep("Error", ., invert = TRUE)] %>% # to exclude any API error or else
+  as.vector()
+
+# --- 5. Generate pseudo-absences if necessary
+mcmapply(FUN = pseudo_abs,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 6. Outliers, Environmental predictor and MESS check 
+# This functions returns an updated subfolder_list with meaningful feature set
+subfolder_list <- mcmapply(FUN = query_check,
+                           FOLDER_NAME = run_name1,
+                           SUBFOLDER_NAME = subfolder_list,
+                           mc.cores = min(length(subfolder_list), MAX_CLUSTERS), mc.preschedule = FALSE) %>% 
+  unlist() %>% 
+  na.omit(subfolder_list) %>% 
+  as.vector()
+
+# --- 7. Generate split and re sampling folds
+mcmapply(FUN = folds,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 8. Hyper parameters to train
+hyperparameter(FOLDER_NAME = run_name1)
+
+# --- 9. Model fit
+mcmapply(FUN = model_wrapper,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 10. Model evaluation
+# Performance metric and variable importance
+mcmapply(FUN = eval_wrapper,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# ---11. Model projections
+mcmapply(FUN = proj_wrapper,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 12. Output plots
+# --- 12.1. Standard maps per algorithms
+mcmapply(FUN = standard_maps,
+         FOLDER_NAME = run_name1,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 12.4 User synthesis
+user_synthesis(FOLDER_NAME = run_name1)
+
+```
+
+## Run the predict first - assemble later method
+
+We continue our example by requesting the Metagenome Assembled Genomes (MAG; data retrieved from DNA sequencing) matching a set of pre-defined criteria. In our case, we are interested by taxa with more than 50 occurrences available within a 0 to 300m depth range (i.e., corresponding to the water column of the continental shelf) and the 1990 to present period. This data can be requested from the `DATA_SOURCE = "MAG"` option. However, for the sake of time it is already pre-loaded in a `.csv` file.
+
+```{r}
+# --- 1. List the available species
+# Within the user defined selection criteria
+
+# Request database for available MAG data:
+list_bio <- list_bio_wrapper(FOLDER_NAME = run_name2, # second run
+                             DATA_SOURCE = "./data/notebook2_predict_first.csv",
+                             SAMPLE_SELECT = list(MIN_SAMPLE = 50, 
+                                                  TARGET_MIN_DEPTH = 0, TARGET_MAX_DEPTH = 130,
+                                                  START_YEAR = 1990, STOP_YEAR = 2024))
+
+# This object reports on the available data per taxa:
+head(list_bio)
+```
+
+In our example, we will focus on the Coccolithophores. We subset the list_bio object to extract all MAGs corresponding to the taxonomic class of *Prymnesiophyceae*. Note that a list of several species can also be given as a character string vector.
+
+```{r}
+
+# Extract the ID pre-computed in list_bio:
+sp_list <- list_bio %>%
+  dplyr::select(worms_id) %>% 
+  unique() %>% pull() %>% .[!grepl("No match", .)]
+
+# Print
+print(sp_list)
+```
+
+Now that we defined the target(s), we initialize the CEPHALOPOD run for the predict first approach. As explained in Notebook 1, the parameters are defined in this function and used throughout the data pre-processing and modelling steps, without further change. Please read the function description or technical documentation for an exhaustive parameter list. The most important parameter in our example are mentionned below:
+
+-   `DATA_TYPE`: to treat MAGs as predict-first diversity estimate, we set the data type to "proportions". The shannon diversity will be computed at the end of the notebook, pixel-wise, and compared to the assemble-first approach.
+
+All user-defined parameters are saved in the `CALL.RData` object for traceback and one folder is created for each considered target taxa. All subsequent pre-processing and modelling steps are parallelized over the considered target taxa and do not require user-interactions.
+
+```{r}
+
+# --- 2. Create the output folder, initialize parallelisation and parameters
+# (1) Create an output folder containing all species-level runs, (2) Stores the 
+# global parameters in an object, (3) Builds a local list of monthly raster
+env_path <- NULL # replace by local path to environmental predictors
+env_var <- NULL # take all
+
+subfolder_list <- run_init(FOLDER_NAME = run_name2,
+                           SP_SELECT = sp_list,
+                           WORMS_CHECK = FALSE, # not available for omics
+                           FAST = TRUE,
+                           DATA_TYPE = "proportions",
+                           ENV_VAR = env_var,
+                           ENV_PATH = env_path)
+```
+
+All pre-processing and modelling steps of CEPHALOPOD are detailed in the example given in notebook 1. Therefore, in this notebook 2, we will run the predict first approach in one code chunk, as it does not require user interactions. A comparison between both diversity estimation approaches will be given after completing the CEPHALOPOD runs.
+
+```{r}
+
+# --- 3. Query biological data
+# Get the biological data of the species we wish to model
+mcmapply(FUN = query_bio_wrapper,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 4. Query environmental data
+# This functions returns an updated subfolder_list object to avoid computing
+# species with less than the user defined minimum occurrence number
+subfolder_list <- mcmapply(FUN = query_env,
+                  FOLDER_NAME = run_name2,
+                  SUBFOLDER_NAME = subfolder_list,
+                  mc.cores = min(length(subfolder_list), MAX_CLUSTERS), mc.preschedule = FALSE) %>% 
+  unlist() %>% 
+  na.omit(subfolder_list) %>% 
+  .[grep("Error", ., invert = TRUE)] %>% # to exclude any API error or else
+  as.vector()
+
+# --- 5. Generate pseudo-absences if necessary
+mcmapply(FUN = pseudo_abs,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 6. Outliers, Environmental predictor and MESS check 
+# This functions returns an updated subfolder_list with meaningful feature set
+subfolder_list <- mcmapply(FUN = query_check,
+                           FOLDER_NAME = run_name2,
+                           SUBFOLDER_NAME = subfolder_list,
+                           mc.cores = min(length(subfolder_list), MAX_CLUSTERS), mc.preschedule = FALSE) %>% 
+  unlist() %>% 
+  na.omit(subfolder_list) %>% 
+  as.vector()
+
+# --- 7. Generate split and re sampling folds
+mcmapply(FUN = folds,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 8. Hyper parameters to train
+hyperparameter(FOLDER_NAME = run_name2)
+
+# --- 9. Model fit
+mcmapply(FUN = model_wrapper,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 10. Model evaluation
+# Performance metric and variable importance
+mcmapply(FUN = eval_wrapper,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# ---11. Model projections
+mcmapply(FUN = proj_wrapper,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 12. Output plots
+# --- 12.1. Standard maps per algorithms
+mcmapply(FUN = standard_maps,
+         FOLDER_NAME = run_name2,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 12.4 User synthesis
+user_synthesis(FOLDER_NAME = run_name2)
+```
+
+## Compute diversity estimates
+
+The following code section (1) extracts the projections from the predict first method, in order to compute a pixel wise diversity estimation, and then (2) extracts the diversity estimation from the assemble first method. Please, note that we only compute an average diversity estimation across bootstrap and month. However, computing a specific estimation per bootstrap, or month can be achieved by modifying the dimensions on which the average is computed at the end of the code section.
+
+```{r}
+
+# --- 1. Global parameter loading
+FOLDER_NAME <- run_name2
+load(paste0(project_wd, "/output/", FOLDER_NAME,"/CALL.RData"))
+
+# Baseline raster
+CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::rast(x)) # Unpack the rasters first
+r0 <- CALL$ENV_DATA[[1]][[1]]
+
+# Land mask
+land <- r0
+land[is.na(land)] <- 9999
+land[land != 9999] <- NA
+
+# --- 2. Predict first - assemble later estimation
+message(paste0(Sys.time(), "--- P. First - A. Later : build the ensembles - START"))
+
+# --- 2.1. Which subfolder list and which model in the ensemble
+all_files <- list.files(paste0(project_wd, "/output/", FOLDER_NAME), recursive = TRUE)
+model_files <- unique(dirname(all_files[grepl("MODEL.RData", all_files)])) #%>% .[1:30]
+ensemble_files <- mclapply(model_files, function(x){
+  memory_cleanup() # low memory use
+  
+  load(paste0(project_wd, "/output/", FOLDER_NAME,"/", x, "/MODEL.RData"))
+  if(length(MODEL$MODEL_LIST) >= 1){
+    load(paste0(project_wd, "/output/", FOLDER_NAME,"/", x, "/QUERY.RData"))
+    return(list(SUBFOLDER_NAME = x, MODEL_LIST = MODEL$MODEL_LIST, Y = QUERY$Y, MESS = QUERY$MESS, REC = MODEL$recommandations))
+  } else {
+    return(NULL)
+  } # if model list
+}, mc.cores = round(MAX_CLUSTERS/2, 0), mc.preschedule = FALSE) %>% 
+  .[lengths(.) != 0] %>% 
+  .[grep("Error", ., invert = TRUE)] # to exclude any API error or else
+
+# --- 2.2. Loop over the files
+message(paste0(Sys.time(), "--- P. First - A. Later: build the ensembles - loop over files"))
+tmp <- mclapply(ensemble_files, function(x){
+  memory_cleanup() # low memory use
+  
+  # --- 2.2.1. Load MODEL files
+  load(paste0(project_wd, "/output/", FOLDER_NAME,"/", x$SUBFOLDER_NAME, "/MODEL.RData"))
+  
+  # --- 2.2.2. Extract projections in a matrix
+  if(length(MODEL$MODEL_LIST) > 1){
+    m <- lapply(MODEL$MODEL_LIST, function(y){
+      MODEL[[y]][["proj"]]$y_hat
+    }) %>% abind(along = 4) %>% apply(c(1,2,3), function(z)(z = mean(z, na.rm = TRUE)))
+  } else {
+    m <- MODEL$MODEL_LIST[["proj"]]$y_hat
+  } # end if
+}, mc.cores = round(MAX_CLUSTERS/2, 0), mc.cleanup = TRUE)
+
+# --- 2.3. Stack ensembles and compute diversity
+message(paste0(Sys.time(), "--- P. First - A. Later: build the ensembles - format to array"))
+all_ens <- tmp %>% 
+  abind(along = 4) %>% 
+  aperm(c(1,4,2,3))
+all_ens[all_ens < 0] <- 0 # security
+
+predict_first_shannon <- apply(all_ens, c(1), function(x)(x = vegan::diversity(x, "shannon")))
+message(paste0(Sys.time(), "--- P. First - A. Later : DONE"))
+
+# --- 3. Assemble first - predict later estimation
+message(paste0(Sys.time(), "--- A. First - P. Later : build the ensembles - START"))
+FOLDER_NAME <- run_name1
+load(paste0(project_wd, "/output/", FOLDER_NAME, "/shannon/MODEL.RData"))
+
+# --- 3.1. Extract projections in a matrix
+if(length(MODEL$MODEL_LIST) > 1){
+  assemble_first_shannon <- lapply(MODEL$MODEL_LIST, function(y){
+    MODEL[[y]][["proj"]]$y_hat
+  }) %>% abind(along = 4) %>% apply(c(1,2,3), function(z)(z = mean(z, na.rm = TRUE)))
+} else {
+  assemble_first_shannon <- MODEL$MODEL_LIST[["proj"]]$y_hat
+} # end if
+
+# --- 3.2. Compute the diversity
+assemble_first_shannon <- apply(assemble_first_shannon, c(1), function(x)(x = mean(x, na.rm = TRUE)))
+```
+
+## Graphical output
+
+In the following section, we plot the pattern of both diversity estimations methods. The patterns are rescaled by quantiles for comparability and a spearman correlation value is provided. Further analysis can be performed using the informations saved in the `MODEL.RData` objects. For instance, one could extract the variable importance for both estimation method, and compare the community level drivers (i.e., assemble first) to the taxonomic level drivers (i.e. predict first). The drivers may present differences despite highly correlated (Spearman = 0.86) spatial projections of the Shannon diversity.
+
+```{r}
+
+# --- 1. Function definition to transforme a raster in quantiles
+r_quantile_rescale <- function(r, base){
+  values <- values(r)
+  quantiles <- quantile(values, probs = seq(0, 1, by = 0.01), na.rm = TRUE) %>% unique()  # Change the 'probs' argument as needed
+  quantile_values <- cut(values, breaks = quantiles, include.lowest = TRUE, labels = FALSE)
+  new_raster <- setValues(base, quantile_values)
+  return(new_raster)
+}
+
+# --- 2. Spearman correlation
+spearman <- cor(assemble_first_shannon, predict_first_shannon, method = "spearman", use = "pairwise.complete.obs")
+print(spearman)
+
+# --- 3. Construct rasters
+r_assemble_first_shannon <- setValues(r0, assemble_first_shannon)
+rq_assemble_first_shannon <- r_quantile_rescale(r_assemble_first_shannon, land)
+
+r_predict_first_shannon <- setValues(r0, predict_first_shannon)
+rq_predict_first_shannon <- r_quantile_rescale(r_predict_first_shannon, land)
+
+# --- 4. Plot
+par(mfrow = c(2,1))
+plot(rq_assemble_first_shannon, col = parula_pal(100), main = "Assemble first Shannon diversity of Coccolithophores")
+plot(land, col = "black", add = TRUE, legend = FALSE)
+
+plot(rq_predict_first_shannon, col = parula_pal(100), main = "Predict first Shannon diversity of Coccolithophores")
+plot(land, col = "black", add = TRUE, legend = FALSE)
+
+
+
+```

@@ -3,40 +3,50 @@
 #' @description sub-pipeline corresponding to the model fitting procedure for
 #' continuous data. Called via the model_wrapper.R function, thus no default
 #' parameter values are defined.
+#' 
 #' @param CALL the call object from the master pipeline. 
-#' @param QUERY the query object from the master pipeline
+#' @param QUERY the query object from the master pipeline.
+#' 
 #' @return returns a list object containing the best model, associated hyper
 #' parameters and predicted values per re sampling folds
 
-model_continuous <- function(CALL,
-                             QUERY){
+model_continuous <- function(CALL, QUERY){
   
   # --- 1. Initialize
-  # --- 1.1. Storage in MODEL object
+  # --- 1.1. Store hyperparameter set in MODEL object
   MODEL <- CALL$HP
   
+  # --- 1.2. Get model list
+  model_name <- CALL$MODEL_LIST
+  rm(CALL) # Remove CALL for memory use
+  gc()
+  
   # --- 2. Loop with all selected models
-  for(i in 1:length(CALL$MODEL_LIST)){
-    # --- 2.1. Display information
-    message(paste(Sys.time(), "--- Start hyper parameter tuning for", CALL$MODEL_LIST[i], "---"))
+  for(i in seq_along(model_name)){
     
-    # --- 2.2. Define the formula
-    # General formula for all algorithms vs Specific for GAM (including the spline)
-    if(CALL$MODEL_LIST[i] != "GAM"){tmp <- QUERY$SUBFOLDER_INFO$ENV_VAR %>% paste(collapse = " + ")
-    } else {tmp <- paste0("s(", QUERY$SUBFOLDER_INFO$ENV_VAR %>% paste(collapse = ", k = 3) + s("), ", k = 3)")}
-    formula <- paste0("measurementvalue ~ ", tmp) %>% as.formula()
+    message(paste(Sys.time(), "--- Start hyper parameter tuning for", model_name[i], "---"))
     
-    # --- 2.3. Define workflow adapted to hyper parameter tuning
+    # --- 2.1. Define the formula
+    # General formula for most models; special handling for GAM
+    if(model_name[i] != "GAM"){
+      formula_vars <- QUERY$SUBFOLDER_INFO$ENV_VAR %>% paste(collapse = " + ")
+    } else {
+      # GAM requires spline terms
+      formula_vars <- paste0("s(", QUERY$SUBFOLDER_INFO$ENV_VAR %>% paste(collapse = ", k = 3) + s("), ", k = 3)")
+    }
+    formula <- paste0("measurementvalue ~ ", formula_vars) %>% as.formula()
+    
+    # --- 2.2. Define workflow adapted to hyper parameter tuning
     model_wf <- workflow() %>% 
       add_variables(outcomes = "measurementvalue", predictors = QUERY$SUBFOLDER_INFO$ENV_VAR) %>% 
-      add_model(MODEL[[CALL$MODEL_LIST[i]]][["model_spec"]], formula = formula)
+      add_model(MODEL[[model_name[i]]][["model_spec"]], formula = formula)
     
-    # --- 2.4. Run the model for each fold x (hyper parameter grid rows)
+    # --- 2.3. Run the model for each fold x (hyper parameter grid rows)
     # Runs hyper parameter tuning if a grid is present in the HP (e.g. no GLM tune)
-    if(!is.null(MODEL[[CALL$MODEL_LIST[i]]][["model_grid"]])){
+    if(!is.null(MODEL[[model_name[i]]][["model_grid"]])){
       model_res <- model_wf %>% 
         tune_grid(resamples = QUERY$FOLDS$resample_split,
-                  grid = MODEL[[CALL$MODEL_LIST[i]]][["model_grid"]],
+                  grid = MODEL[[model_name[i]]][["model_grid"]],
                   metrics = yardstick::metric_set(rmse),
                   control = control_grid(verbose = TRUE, allow_par = FALSE))
     } else {
@@ -45,30 +55,26 @@ model_continuous <- function(CALL,
                       control = control_resamples(verbose = TRUE, allow_par = FALSE))
     }
     
-    # --- 2.5. Select best hyper parameter set
+    # --- 2.4. Select best hyper parameter set
     # Based on RMSE values per model run (rsq does not work with 0's)
-    model_best <- model_res %>% 
-      select_best(metric = "rmse")
-    # Retrieve the corresponding RMSE as well
-    rmse_best <- model_res %>% show_best(metric = "rmse") %>% .[1,]
-    MODEL[[CALL$MODEL_LIST[i]]][["best_fit"]] <- rmse_best
+    model_best <- model_res %>% select_best(metric = "rmse")
+    # Retrieve the corresponding RMSE as well 
+    MODEL[[model_name[i]]][["best_fit"]] <- model_res %>% show_best(metric = "rmse") %>% .[1,]
     
-    # --- 2.6. Define final workflow
-    final_wf <- model_wf %>% 
-      finalize_workflow(model_best)
+    # --- 2.5. Define final workflow
+    final_wf <- model_wf %>% finalize_workflow(model_best)
     
-    # --- 2.7. Run the model on same cross validation splits
+    # --- 2.6. Run the model on same cross validation splits
     # We have one fit per cross validation saved in a list, to be passed to further steps
-    final_fit <- lapply(1:CALL$NFOLD, function(x){
-      out <- final_wf %>%
-      last_fit(QUERY$FOLDS$resample_split$splits[[x]])
+    final_fit <- lapply(seq_along(QUERY$FOLDS$resample_folds), function(x){
+      out <- final_wf %>% last_fit(QUERY$FOLDS$resample_split$splits[[x]])
       return(out)
     }) # loop over the same cross validation folds
     
-    MODEL[[CALL$MODEL_LIST[i]]][["final_wf"]] <- final_wf
-    MODEL[[CALL$MODEL_LIST[i]]][["final_fit"]] <- final_fit
+    MODEL[[model_name[i]]][["final_wf"]] <- final_wf
+    MODEL[[model_name[i]]][["final_fit"]] <- final_fit
     
-    # --- 2.8. Display information
+    # --- 2.7. Display information
     message(paste(Sys.time(), "--- DONE ---"))
   }
   

@@ -20,18 +20,11 @@ MAX_CLUSTER = 20
 # --- 1. List the available species
 # Within the user defined selection criteria
 list_bio <- list_bio_wrapper(FOLDER_NAME = run_name,
-                             DATA_SOURCE = "MAG", # occurrence ; abundance ; biomass ; MAG; or path to a .csv file
+                             DATA_SOURCE = "file.csv", # occurrence ; abundance ; biomass ; MAG; or path to a .csv file
                              SAMPLE_SELECT = list(MIN_SAMPLE = 50, TARGET_MIN_DEPTH = 0, TARGET_MAX_DEPTH = 200, START_YEAR = 1950, STOP_YEAR = 2020))
 
 # ------------------------------------------------------------------------------
 # --- USER INPUT: Define the list of species to consider
-# To extract coccolithophore MAGs from MATOU
-sp_list <- list_bio %>%
-  dplyr::filter(taxonrank == "MAG") %>% # all MAG
-  dplyr::filter(Class == "Prymnesiophyceae") %>%# of class prymnesiophyceae
-  dplyr::select(worms_id) %>% 
-  unique() %>% pull() %>% .[!grepl("No match", .)]
-
 # To extract all species available in a .csv file
 sp_list <- list_bio %>%
   dplyr::select(worms_id) %>% 
@@ -48,8 +41,7 @@ subfolder_list <- run_init(FOLDER_NAME = run_name,
                            FAST = TRUE,
                            LOAD_FROM = NULL,
                            DATA_TYPE = "continuous", # presence_only ; continuous ; proportions
-                           ENV_VAR = c("!climatology_s_0_50","!climatology_s_200_300","!climatology_t_200_300","!climatology_A_200_300","!climatology_i_200_300","!climatology_n_200_300","!climatology_p_200_300","!climatology_o_200_300","!climatology_O_200_300"),
-                           # ENV_VAR = c("climatology_M_0_0","climatology_i_0_50","climatology_t_0_50","climatology_p_0_50","climatology_n_0_50","climatology_omega_ca_SODA","climatology_A_PAR_regridded"),
+                           ENV_VAR = c("climatology_M_0_0","climatology_i_0_50","climatology_t_0_50","climatology_p_0_50","climatology_n_0_50","climatology_omega_ca_SODA","climatology_A_PAR_regridded"),
                            ENV_PATH = NULL, # replace by local path to environmental predictors : https://data.d4science.net/m9WC
                            METHOD_PA = "density",
                            PER_RANDOM = 0,

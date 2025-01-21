@@ -61,28 +61,46 @@ colmat_plot <- function(colormatrix, xlab, ylab){
 
 # Function to assign color-code to raster data
 bivar_map <- function(rasterx, rastery, colormatrix, cutx = NULL, cuty = NULL){
-  require(raster)
+  require(terra)
   require(virtualspecies)
   
-  colorid <- matrix(seq(1:length(colormatrix)), nrow=nrow(colormatrix), ncol=ncol(colormatrix), byrow=TRUE)
+  # Matrix of color IDs, where rows represent splits of rastery and columns represent splits of rasterx
+  colorid <- matrix(seq(1:length(colormatrix)), nrow = nrow(colormatrix), ncol = ncol(colormatrix), byrow = TRUE)
   
-  splitx <- cut(rasterx, breaks = nrow(colormatrix))
-  splity <- cut(rastery, breaks = ncol(colormatrix))
+  # Use classify to split raster values into bins based on the number of rows/columns of the colormatrix
+  splitx <- classify(rasterx, nrow(colormatrix))  # Split into bins based on the number of rows in the colormatrix
+  splity <- classify(rastery, ncol(colormatrix))  # Split into bins based on the number of columns
   
+  # Handle custom breaks if provided
   if(!is.null(cutx) & !is.null(cuty)){
-    if(length(cutx) == (ncol(colormatrix)+1) & length(cuty) == (nrow(colormatrix)+1)){
-      # Add security if cutx or cuty has a smaller range than the raster
-      rasterx[rasterx<min(cutx) | rasterx>max(cutx)] <- NA
-      rastery[rastery<min(cuty) | rastery>max(cuty)] <- NA
+    if(length(cutx) == (ncol(colormatrix) + 1) & length(cuty) == (nrow(colormatrix) + 1)){
+      # Ensure raster values are within cutx and cuty bounds
+      rasterx[rasterx < min(cutx) | rasterx > max(cutx)] <- NA
+      rastery[rastery < min(cuty) | rastery > max(cuty)] <- NA
       
-      splitx <- cut(rasterx, breaks = cutx)
-      splity <- cut(rastery, breaks = cuty)
+      splitx <- classify(rasterx, cutx)
+      splity <- classify(rastery, cuty)
     } else {
-      stop("cutx and cuty dimension should be respectively nrow(colormatrix)+1 and ncol(colormatrix)+1")
+      stop("cutx and cuty dimensions should be respectively nrow(colormatrix) + 1 and ncol(colormatrix) + 1")
     }
-  } # end if
-  z <- setValues(rasterx,colorid[cbind(getValues(splitx),getValues(splity))])
-  col_plot <- colormatrix[min(getValues(z), na.rm = TRUE):max(getValues(z), na.rm = TRUE)]
+  }
+  
+  # Create an empty raster z based on rasterx, initialize with NA
+  z <- terra::rast(rasterx)
+  values(z) <- NA  # Initialize all cells as NA
+  
+  # Get the valid (non-NA) cells from splitx and splity
+  valid_cells <- !is.na(values(splitx)) & !is.na(values(splity))
+  
+  # Get the indices from splitx and splity for the valid cells
+  valid_splitx <- values(splitx+1)[valid_cells] # +1 because it gets the lower bound (0 value = index 1 in color_id)
+  valid_splity <- values(splity+1)[valid_cells] # +1 because it gets the lower bound (0 value = index 1 in color_id)
+  
+  # Use the bin indices from valid_splitx and valid_splity to get the correct color index from colorid
+  values(z)[valid_cells] <- colorid[cbind(valid_splitx, valid_splity)]  # Note: Rows (splity) and Columns (splitx)
+  
+  # Define color plot based on the range of values in z
+  col_plot <- colormatrix[min(values(z), na.rm = TRUE):max(values(z), na.rm = TRUE)]
   
   return(list(z, col_plot))
 }

@@ -1,0 +1,295 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Introduction
+
+In the present [R Markdown](http://rmarkdown.rstudio.com) Notebook, we show an application of CEPHALOPOD to derive the spatial distribution of Great Hammerhead shark from occurrence data. This species is distributed on continental shelves in tropical waters along Australia or the Caribbeans and is critically endangered according to the IUCN.
+
+Please refer to the method section of the manuscript, or the code description for additional technical documentation.
+
+To execute the notebook, click to the Run button within each code chunk, or place your cursor inside it and press *Ctrl+Shift+Enter*. Results will appear beneath the code chunk.
+
+## Installing CEPHALOPOD
+
+1.  Download the CEPHALOPOD code as provided in the code availability statement and decompress the archive in the designated installation path.
+2.  Initiate an R session (version 4.4 or above) on your local machine or computing cluster. We recommend a LINUX environment, 8 cores and 32 Gb of memory for a general usage across most case studies.
+3.  Navigate to the file located at: `./code/00_config.R`
+4.  Execute the R library installation commands line by line and respond affirmatively to interactive prompts. Ensure that all necessary libraries and corresponding versions are correctly installed.
+
+## Initialize a CEPHALOPOD run
+
+To avoid any conflict with previous computations, we first reset the current R session. Then, we define the working directory, the CEPHALOPOD instance name and load necessary libraries or functions.
+
+```{r}
+
+# Clean the memory and open connections:
+rm(list=ls())
+closeAllConnections()
+
+# Define your working directory. This should correspond to your CEPHALOPOD installation path:
+setwd("./CEPHALOPOD")
+
+# Load the necessary libraries and functions:
+source(file = "./code/00_config.R")
+
+# Give a name to your CEPHALOPOD run:
+run_name <- "notebook1"
+```
+
+We start our example by requesting the OBIS and GBIF database about the available occurrences and taxa matching a set of pre-defined criteria. In our case, we are interested by taxa with more than 50 occurrences available within a 0 to 300m depth range (i.e., corresponding to the water column of the continental shelf) and the 1990 to present period.
+
+```{r}
+# --- 1. List the available species
+# Within the user defined selection criteria
+
+# Request OBIS and GBIF database for available occurrence data:
+list_bio <- list_bio_wrapper(FOLDER_NAME = run_name,
+                             DATA_SOURCE = "occurrence",
+                             SAMPLE_SELECT = list(MIN_SAMPLE = 50, 
+                                                  TARGET_MIN_DEPTH = 0, TARGET_MAX_DEPTH = 130,
+                                                  START_YEAR = 1990, STOP_YEAR = 2024))
+
+# This object reports on the available data per taxa:
+head(list_bio)
+```
+
+In our example, we will focus on the great hammerhead shark (*Sphryna mokarran*). We subset the list_bio object to extract the World Register of Marine Species (WoRMS) identifier for this species. Note that a list of several species can also be given as a character string vector.
+
+```{r}
+
+# Define the species of interest:
+target_names <- c("Sphyrna mokarran")
+
+# Extract their WoRMS identifier if present in list_bio:
+sp_list <- list_bio %>%
+  dplyr::filter(scientificname %in% target_names) %>%
+  dplyr::select(worms_id) %>%
+  unique() %>% pull()
+
+# Print
+print(sp_list)
+```
+
+Once the target(s) are correctly defined by their WoRMS identifier (i.e., it can be another identifier if the WoRMS is not relevant), we initialize the CEPHALOPOD run by defining all relevant parameters. The parameters are defined in this function and used throughout the data pre-processing and modelling steps, without further change. Please read the function description or technical documentation for an exhaustive parameter list.
+
+In our example, we set the following:
+
+-   `SP_SELECT`: the vector of WoRMS identifiers corresponding to the target species
+
+-   `FAST`: successful quality checks are necessary for further computation
+
+-   `DATA_TYPE`: occurrence data correspond to a "presence_only" data type
+
+-   `ENV_VAR`: the vector of environmental feature names to consider. The use of "!" corresponds to an exclusion.
+
+-   `ENV_PATH`: the path to the environmental feature files.
+
+-   `PER_RANDOM`: the percentage of random pseudo-absences
+
+-   `PA_ENV_STRATA`: in addition to the default density-based pseudo-absence sampling, we sample pseudo-absences in locations environmentally distinct from presences.
+
+-   `CUT`: habitat suitability threshold under which we discard spatial discontinuities in the projections
+
+All user-defined parameters are saved in the `CALL.RData` object for traceback and one folder is created for each considered target taxa. All subsequent pre-processing and modelling steps are parallelized over the considered target taxa and do not require user-interactions.
+
+```{r}
+
+# --- 2. Create the output folder, initialize parallelisation and parameters
+# (1) Create an output folder containing all species-level runs, (2) Stores the 
+# global parameters in an object, (3) Builds a local list of monthly raster
+env_path <- NULL # replace by local path to environmental predictors
+env_var <- NULL # take all
+
+subfolder_list <- run_init(FOLDER_NAME = run_name,
+                           SP_SELECT = sp_list,
+                           FAST = TRUE,
+                           DATA_TYPE = "presence_only",
+                           ENV_VAR = env_var,
+                           ENV_PATH = env_path,
+                           PER_RANDOM = 0.2,
+                           PA_ENV_STRATA = FALSE,
+                           CUT = 0.1)
+```
+
+## Pre-processing with CEPHALOPOD
+
+The first step of the data-pre-processing consist in extracting the biological target values at the observation locations. As for all subsequent steps, this function only takes two inputs:
+
+-   `FOLDER_NAME`: the name of the CEPHALOPOD run.
+
+-   `SUBFOLDER_NAME`: the vector of target to process. It is dynamically updated by the CEPHALOPOD steps associated with a quality check or flag.
+
+The function output(s) are written in a QUERY.RData object, specific to each target and located in the corresponding folder.
+
+```{r}
+
+# --- 3. Query biological data
+# Get the biological data of the species we wish to model
+mcmapply(FUN = query_bio_wrapper,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+```
+
+The second step of the data pre-processing consist in extracting environmental feature values at the observation locations, re-grid the target on the environmental feature grid and consequently discard target(s) that do not meet the minimum sample requirements.
+
+```{r warning=FALSE}
+
+# --- 4. Query environmental data
+# This functions returns an updated subfolder_list object to avoid computing
+# species with less than the user defined minimum occurrence number
+subfolder_list <- mcmapply(FUN = query_env,
+                           FOLDER_NAME = run_name,
+                           SUBFOLDER_NAME = subfolder_list,
+                           mc.cores = min(length(subfolder_list), MAX_CLUSTERS), mc.preschedule = FALSE) %>% 
+  unlist() %>% 
+  na.omit(subfolder_list) %>% 
+  .[grep("Error", ., invert = TRUE)] %>% # to exclude any API error or else
+  as.vector()
+
+# Check which target still have the minimum sample requirements:
+print(subfolder_list)
+```
+
+To compensate for the lack of true absences in marine datasets, we generate pseudo-absences in equal number to the presences (i.e., parameter `NB_PA`). They follow the same sampling effort bias than the presences and can be optionally sampled (i.e., parameter `PA_ENV_STRATA`) in environmental distinct locations to the presences, or randomly (i.e., parameter `PER_RANDOM`). The following function produces a .pdf output file to visualize the observation locations, independently of the considered data type.
+
+```{r}
+
+# --- 5. Generate pseudo-absences if necessary
+mcmapply(FUN = pseudo_abs,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+```
+
+As an example, we can open the .pdf file produced for the *Sprattus sprattus* taxa as following:
+
+```{r}
+
+filename = paste0("./output/", run_name, "/", subfolder_list[1], "/01_pseudo_abs.pdf")
+browseURL(filename)
+```
+
+At this stage, all necessary environmental features and biological target have been retrieved. Therefore, we need to check for (i) biological outliers, (ii) correlated or (iii) non-informative environmental features, (iv) estimate extrapolation outside environmental conditions of the observations, and (v) produce a quality flag before starting the modelling steps. The following function produces several .pdf output file to visualize the feature multicollinearity, relationship with the target, and selection process.
+
+```{r}
+
+# --- 6. Outliers, Environmental predictor and MESS check 
+# This functions returns an updated subfolder_list with meaningful feature set
+subfolder_list <- mcmapply(FUN = query_check,
+                           FOLDER_NAME = run_name,
+                           SUBFOLDER_NAME = subfolder_list,
+                           mc.cores = min(length(subfolder_list), MAX_CLUSTERS), mc.preschedule = FALSE) %>% 
+  unlist() %>% 
+  na.omit(subfolder_list) %>% 
+  as.vector()
+
+# Check which target successfully passed the quality check:
+print(subfolder_list)
+```
+
+As an example, we can open the .pdf file produced as following:
+
+```{r}
+
+# Feature multicollinearity:
+filename = paste0("./output/", run_name, "/", subfolder_list[1], "/02_env_cor.pdf")
+browseURL(filename)
+
+# Feature selection:
+filename = paste0("./output/", run_name, "/", subfolder_list[1], "/03_feature_pre_selection.pdf")
+browseURL(filename)
+```
+
+As shown in the file, the oxygen concentration, saturation and utilization features present a correlation value of 0.9 at the sampling locations. Because oxygen utilization shares more information or correlation with the target, it was selected instead of the other features. However, the effect or importance of oxygen utilization in the subsequent modelling step has to be interpreted as a join effect between all these features. The pre-selection shows that both temperature and salinity have the largest variance explained. Furthermore, all features are selected for subsequent modelling steps, as the information they provide is not redundant.
+
+The last steps of the pre-processing section consist in generating the cross-validation splits and defining the model hyperparameters to test. To minimize the effect of spatial autocorrelation, the cross-validation splits are defined as distinct spatial blocks.
+
+```{r}
+
+# --- 7. Generate split and re sampling folds
+mcmapply(FUN = folds,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 8. Hyper parameters to train
+hyperparameter(FOLDER_NAME = run_name)
+```
+
+## Distribution modelling with CEPHALOPOD
+
+All the following steps aim to train, evaluate the produce spatial projections for each taxa and algorithm passing quality checks. It is parallelized over the targets, takes the same inputs as the previous steps, and saves the outputs in a `MODEL.RData` object in the folder corresponding to each target.
+
+The following chunk of code train each algorithm over the cross-validation splits and determines the best combination of hyperparameters for each considered taxa. Our example considers `presence_only` data, therefore, the wrapper will automatically redirect to the data type specific algorithm training functions. This applies for all subsequent steps.
+
+```{r warning=FALSE}
+
+# --- 9. Model fit
+mcmapply(FUN = model_wrapper,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+```
+
+To estimate the quality of the algorithm training, we evaluate the ability of each algorithm to reproduce a set of independent cross-validation folds (i.e., test folds). We evaluate both the predictive performance, and the ecological relevance of the algorithms by quantifying the variance explained by the top 3 environmental features. The following step summarizes the evaluation in a .pdf file in addition to the `MODEL.RData` files.
+
+```{r}
+
+# --- 10. Model evaluation
+# Performance metric and variable importance
+mcmapply(FUN = eval_wrapper,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+```
+
+As an example, we can open the .pdf file produced for the *Sprattus sprattus* taxa as following:
+
+```{r}
+
+# Feature variance explained for the Sprattus sprattus:
+filename = paste0("./output/", run_name, "/", subfolder_list[1], "/04_variable_importance.pdf")
+browseURL(filename)
+```
+
+Finally, we estimate the spatial distribution for all targets successfully passing the quality checks through a bootstrap re-sampling procedure. The latter enables a spatially explicit uncertainty estimation in the projections. The values at each geographical location, month, and bootstrap re-sample is saved in the `MODEL.RData` object(s) for further post-processing and cross-target analysis by the user.
+
+```{r warning=FALSE}
+
+# ---11. Model projections
+mcmapply(FUN = proj_wrapper,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+```
+
+## Final outputs of CEPHALOPOD
+
+The final output of CEPHALOPOD consists in a .pdf file presenting both the spatial projections, and associated quality checks and flags for each target. All .pdf files are also concatenated in a summary file at the root of the CEPHALOPOD run folder. By default the projections are given for summer and winter month, to showcase eventual seasonality in the distribution of each target. An ensemble projection is systematically built when relevant. All projections are associated with a corresponding modelling uncertainty, as well as an estimation of extrapolation outside the environmental conditions of the observations.
+
+Please read the function description for alternative parameters, or post-process the spatial distributions with your own functions, based on the data saved in the `MODEL.RData` object.
+
+```{r}
+
+# --- 12. Output plots
+# --- 12.1. Standard maps per algorithms
+mcmapply(FUN = standard_maps,
+         FOLDER_NAME = run_name,
+         SUBFOLDER_NAME = subfolder_list,
+         mc.cores = min(length(subfolder_list), MAX_CLUSTERS), USE.NAMES = FALSE, mc.preschedule = FALSE)
+
+# --- 12.4 User summary
+user_synthesis(FOLDER_NAME = run_name)
+```
+
+As an example, we can open the .pdf file produced as following:
+
+```{r}
+
+# Standard projections:
+filename = paste0("./output/", run_name, "/", subfolder_list[1], "/05_standard_maps.pdf")
+browseURL(filename)
+```

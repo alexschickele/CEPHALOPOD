@@ -2,23 +2,26 @@
 #' @name folds
 #' @description this functions adds an FOLD list to the query. It corresponds to
 #' the different folds between train and test splits and associated parameters
-#' @param FOLDER_NAME name of the corresponding folder
-#' @param SUBFOLDER_NAME list of sub_folders to parallelize on.
+#' 
+#' @param FOLDER_NAME A character string indicating the folder containing the output.
+#' @param SUBFOLDER_NAME A list of subfolders to parallelize the process on.
+#' 
 #' @return Updates the FOLDS in a QUERY.RData file
 
 folds <- function(FOLDER_NAME = NULL,
                   SUBFOLDER_NAME = NULL){
 
   # --- 1. Initialize function
-  set.seed(123)
-  # --- 1.1. Start logs - append file
-  sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
+  set.seed(123)  # Set seed for reproducibility
+  
+  # --- 1.1. Start logging process
+  sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
                        START = TRUE)
   message(paste(Sys.time(), "******************** START : folds ********************"))
-
-  # --- 1.2. Parameter loading
-  load(paste0(project_wd, "/output/", FOLDER_NAME,"/CALL.RData"))
-  load(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/QUERY.RData"))
+  
+  # --- 1.2. Load metadata and previous query
+  load(paste0(project_wd, "/output/", FOLDER_NAME, "/CALL.RData"))
+  load(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/QUERY.RData"))
 
   # --- 1.3. Target transformation
   if(CALL$DATA_TYPE == "continuous" & !is.null(CALL$TARGET_TRANSFORMATION)){
@@ -28,6 +31,10 @@ folds <- function(FOLDER_NAME = NULL,
     Y <- data.frame(tmp$out)
     colnames(Y) <- "measurementvalue"
     QUERY[["target_transformation"]][["yj_obj"]] <- tmp$yj_obj
+    
+    rm(tmp)
+    gc()
+    
   } else {
     Y <- QUERY$Y
   }
