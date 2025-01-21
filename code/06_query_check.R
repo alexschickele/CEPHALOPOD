@@ -2,35 +2,35 @@
 #' @name query_check
 #' @description This function performs a series of last check before modelling,
 #' including an outlier check, environmental variable correlation and MESS
-#' @param FOLDER_NAME name of the corresponding folder
-#' @param SUBFOLDER_NAME list of sub_folders to parallelize on.
+#' 
+#' @param FOLDER_NAME A character string indicating the folder containing the output.
+#' @param SUBFOLDER_NAME A list of subfolders to parallelize the process on.
+#' 
 #' @return Updates the output in a QUERY.RData and CALL.Rdata files
 
 query_check <- function(FOLDER_NAME = NULL,
                         SUBFOLDER_NAME = NULL){
   
   # --- 1. Initialize function
-  set.seed(123)
+  set.seed(123)  # Set seed for reproducibility
   
-  # --- 1.1. Start logs - append file
-  sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
+  # --- 1.1. Start logging process
+  sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
                        START = TRUE)
-  message(paste(Sys.time(), "******************** START : query_check ********************"))
-  # --- 1.2. Load the run metadata and query
-  load(paste0(project_wd, "/output/", FOLDER_NAME,"/CALL.RData"))
-  load(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/QUERY.RData"))
+  message(paste(Sys.time(), "******************** START : query-check ********************"))
+  
+  # --- 1.2. Load metadata and previous query
+  load(paste0(project_wd, "/output/", FOLDER_NAME, "/CALL.RData"))
+  load(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/QUERY.RData"))
+  CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::rast(x)) # Unpack the rasters first
   
   # --- 1.3. Moving average function
-  # Short and only used here, thats why it is not in the function folder
-  ma <- function(x, n = 10){
-                 if(length(x) > n){ma = stats::filter(x, rep(1 / n, n), sides = 2)
-                 } else {ma = NA}
-                 return(ma)
-    } # end function
+  # Used only in this script, hence not in ./function
+  ma <- function(x, n = 10){if(length(x) > n) stats::filter(x, rep(1 / n, n), sides = 2) else NA}  # end function
   
   # --- 1.4. Target transformation - if continuous
-  # Same transformation as at the model stage; used for outliers, spearman, mutual information and target vs. feature plot
-  # As the RFE is a random forest, it works on quantiles, so we do not care about target transformation there.
+  # Data are transformed at the model stage; and used here for all preprocessing steps except the RFE. 
+  # As it is based on a random forest, it works on quantiles, hence does not need transformed values.
   if(CALL$DATA_TYPE == "continuous" & !is.null(CALL$TARGET_TRANSFORMATION)){
     source(CALL$TARGET_TRANSFORMATION)
     Y <- target_transformation(x = QUERY$Y$measurementvalue, REVERSE = FALSE)$out %>% as.data.frame()
@@ -39,11 +39,13 @@ query_check <- function(FOLDER_NAME = NULL,
   } # end if
   
   # --- 2. Early return if the target has unique values (e.g., only 0)
-  if(length(unique(QUERY$Y$measurementvalue)) == 1){
-    message("QUERY CHECK: the target seem to have only unique values. It is therefore not possible to model a response. ")
-    return(NA)
-  } # return if unique target
-  
+  if(CALL$DATA_TYPE != "proportions"){
+    if(length(unique(QUERY$Y$measurementvalue)) == 1){
+      message("QUERY CHECK: the target seem to have only unique values. It is therefore not possible to model a response. ")
+      return(NA)
+    } # return if unique target
+  } # if !proportions
+
   # --- 3. Target outlier analysis
   # Outlier check on the query based on z-score (from Nielja code)
   if(CALL$OUTLIER == TRUE){
@@ -59,14 +61,16 @@ query_check <- function(FOLDER_NAME = NULL,
       } # if to remove !NULL
       
       message(paste("--- OUTLIERS : Removed row number", to_remove, "\n"))
-    }
+      rm(to_remove)
+      gc()
+    } # if presence only or not
   } # END if outlier TRUE
   
   # --- 4. Univariate feature check
   # Remove features that are not explaining the target better than a random one
   # We use both Mutual Information and Spearman as they are slightly different processes
   
-  # --- 4.1. Prepare data for the plot // by feature x metric x random
+  # --- 4.1. Prepare data for the plot // by feature x metric x resample
   # Loops over columns if data are proportions
   univ_data <- lapply(1:ncol(QUERY$X), function(x){
     x <- lapply(1:ncol(Y), function(y){
@@ -81,19 +85,18 @@ query_check <- function(FOLDER_NAME = NULL,
   univ_data[is.na(univ_data)] <- 0
   
   # --- 4.2. Compute the average and SD per bins // for the error bars
-  univ_data_med <- apply(univ_data, c(1,2), median)
-  univ_data_sd <- apply(univ_data, c(1,2), sd)
+  univ_data_med <- apply(univ_data, c(1,2), median) # used in the final plot
+  univ_data_sd <- apply(univ_data, c(1,2), sd) # used in the final plot
   
   # --- 4.3. Nice output table
   univ_feature_check <- univ_data_med %>% 
     as.data.frame() %>% 
-    mutate(ID = row_number(),
-           varname = colnames(QUERY$X))
+    mutate(ID = row_number(), varname = colnames(QUERY$X))
   
   # --- 4.4. List features to keep
   univ_to_keep <- univ_feature_check %>% 
     dplyr::filter(mutual_information > 0 | spearman > 0)
-  univ_to_remove <- colnames(QUERY$X)[-univ_to_keep$ID] # useful for the message to user
+  univ_to_remove <- setdiff(colnames(QUERY$X), univ_to_keep$varname) # useful for the message to user
   
   # --- 4.5. Update QUERY with feature names to keep
   # --- 4.5.1. Inform user and log file
@@ -101,51 +104,47 @@ query_check <- function(FOLDER_NAME = NULL,
     message(paste("FEATURE UNIVARIATE CHECK:", SUBFOLDER_NAME, "no features explain the target distribution better than a random one. 
             Please check the chosen feature and your target distribution."))
     return(NA) # early return if no features (avoid crash later)
-  } else if (length(univ_to_remove) > 1){
+  } else if (length(univ_to_remove) > 0){
     message(paste("FEATURE UNIVARIATE CHECK: discard", univ_to_remove, 
                   "- no more variance explained than a NULL \n"))
   }
   
-  # --- 4.5.2. Do the update
-  QUERY$SUBFOLDER_INFO$ENV_VAR <- colnames(QUERY$X)[univ_to_keep$ID]
+  # --- 4.5.2. Do the update and clean memory
+  QUERY$SUBFOLDER_INFO$ENV_VAR <- univ_to_keep$varname
+  
+  rm(univ_data, univ_to_remove)
+  gc()
   
   # --- 5. Environmental variable correlation check
   # Removing correlated environmental variables to avoid correlated model features
-  if(is.numeric(CALL$ENV_COR) == TRUE){
+  if(is.numeric(CALL$ENV_COR)){
     # --- 5.1. Opening environmental value at presence points
     features <- QUERY$X[,QUERY$SUBFOLDER_INFO$ENV_VAR] # accounting for univariate check
     if(CALL$DATA_TYPE == "presence_only"){
       features <- features[which(QUERY$Y$measurementvalue != 0),]
     }
     
-    # --- 5.2. Filter out unique features
-    features_unique <- apply(features, 2, function(x)(x = length(unique(x))))
-    features <- features[, which(features_unique > 1)]
+    # --- 5.2. Filter out features with unique values
+    # 5 unique values are the threshold for the RFE warning later, we use this one.
+    features <- features[, apply(features, 2, function(x) length(unique(x))) > 5]
     
-    # --- 5.2. Check correlation/distance between variables
-    features_dist <- cor(features, method = "pearson")
-    features_dist <- as.dist(1-abs(features_dist))
-    
-    # --- 5.3. Do a clustering and cut
-    features_clust <- hclust(features_dist) %>% as.dendrogram()
-    features_group <- cutree(features_clust, h = 1-CALL$ENV_COR)
+    # --- 5.2. Compute correlation, cluster and cut multicollinear features
+    features_group <- cor(features, method = "pearson") # Compute correlation
+    features_group <- as.dist(1-abs(features_group)) # Transform to distance
+    features_clust <- hclust(features_group) %>% as.dendrogram() # Cluster; used later
+    features_group <- cutree(features_clust, h = 1-CALL$ENV_COR) # Do the cutoff
     
     # --- 5.4. Choose one variable within each inter-correlated clusters
     # Keeping the one with the highest Spearman and Mutual Information rel. to NULL
-    cor_to_keep <- NULL
-    for(i in 1:max(features_group)){
-      tmp <- univ_feature_check %>% 
-        dplyr::filter(varname %in% names(which(features_group == i))) %>% 
-        mutate(var_expl = max(c(mutual_information, spearman))) %>% 
-        dplyr::arrange(var_expl) %>% 
-        dplyr::select(varname) %>% .[,1] %>% rev()
-      message(paste("--- ENV_COR : Cluster", i, ": Keeping", tmp[1], "\n"))
-      cor_to_keep <- c(cor_to_keep, tmp[1])
-      if(length(tmp) > 1){
-        out <- tmp[-1]
-        message(paste("--- ENV_COR : Cluster", i, ": Removing", out, "\n"))
-      }
-    }
+    cor_to_keep <- sapply(1:max(features_group), function(i){
+      tmp <- univ_feature_check %>%
+        dplyr::filter(varname %in% names(features_group[features_group == i])) %>%
+        dplyr::arrange(dplyr::desc(max(c(mutual_information, spearman)))) %>%
+        dplyr::select(varname) %>% .[,1]
+      tmp[1]
+    })
+    message(paste("--- ENV_COR: Keeping variables from clusters", 1:length(cor_to_keep), ":", cor_to_keep, "\n"))
+    message("Please check out the 02_env_cor.pdf file to see which environmental features were assigned to each clusters \n")
     
     # --- 5.5. Plot the corresponding dendrogram
     pdf(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME,"/02_env_cor.pdf"))
@@ -172,39 +171,41 @@ query_check <- function(FOLDER_NAME = NULL,
   # Done with a Random forest using the method developed in the "Caret" library
   if(CALL$RFE == TRUE){
     if(CALL$DATA_TYPE == "proportions"){
-      message("A RFE predictor selection is not possible for proportion data,
-              please select carefully your predictors")
+      message("A RFE predictor selection is not possible for proportion data, please select carefully your predictors \n")
     } else {
       # --- 6.1. Initialize data and control parameters
-      features <- QUERY$X[,QUERY$SUBFOLDER_INFO$ENV_VAR]
-      rfe_df <- cbind(QUERY$Y, features)
+      # Input dataframe with target and features bind together
+      rfe_df <- cbind(QUERY$Y, QUERY$X[,QUERY$SUBFOLDER_INFO$ENV_VAR])
+      
       # Modify rfFuncs : we modify the selectSize code to use pickSizeBest instead of a 1.5 tolerance around the best
-      rfFuncs$selectSize <- function(...) pickSizeBest(...) # weird functioning :-)
-      rfe_control <- rfeControl(functions=rfFuncs, method="cv", number=5, rerank = FALSE)
+      rfFuncs$selectSize <- function(...) pickSizeBest(...) # modify functions
+      rfe_control <- rfeControl(functions=rfFuncs, 
+                                method="cv", number=5, rerank = FALSE) # assign to the RFE setup
+      
       # --- 6.2. Run the RFE algorithm
       message(paste(Sys.time(), "--- RFE : Fitting the Recursive Feature Exclusion algorithm \n"))
       rfe_fit <- rfe(rfe_df[,-1], rfe_df[,1], sizes = c(1:ncol(rfe_df[,-1])), rfeControl = rfe_control)
 
       # --- 6.3. Extract the relevant predictors
-      # --- 6.3.1. Compute the moving average loss
-      loss_ma <- ma(rfe_fit$results$RMSE, n = 10)
-      # --- 6.3.2. Compute the percentage loss
-      loss_ma_pct <- (loss_ma[-1] - loss_ma[-length(loss_ma)])/loss_ma[-length(loss_ma)]*100
+      # --- 6.3.1. Compute the moving average loss as a percentage
+      loss_ma_pct <- ma(rfe_fit$results$RMSE, n = 10)
+      loss_ma_pct <- (loss_ma_pct[-1] - loss_ma_pct[-length(loss_ma_pct)])/loss_ma_pct[-length(loss_ma_pct)]*100
+      
       # --- 6.3.3. Find the first minimum or <1% loss percentage
       # Consider all variables if "id" is NA, due to moving average not working for low variable number
       id <- which(loss_ma_pct > -1)[1]
       if(is.na(id) == TRUE){
-        message("--- The moving window could not find a minimum loss, please considering
+        message("--- The RFE moving window could not find a minimum loss, please considering
                 removing this option from your run due to insufficient number of environmental variables")
-        id <- ncol(features)
+        id <- length(QUERY$SUBFOLDER_INFO$ENV_VAR)
       }
 
-      # --- 6.4. Compute variable importance
+      # --- 6.4. Compute variable importance // as you would do for a normal random forest
       rfe_vip <- rfe_fit$variables %>%
         dplyr::select(var, Overall) %>%
-        mutate(var = fct_reorder(as.factor(var), Overall, .desc = TRUE))
-
-      # --- 6.5. Extract the environmental variables
+        dplyr::mutate(var = forcats::fct_reorder(as.factor(var), Overall, .desc = TRUE))
+  
+      # --- 6.5. Extract the selected environmental variables
       rfe_to_keep <- rfe_vip$var[1:id] %>% as.character()
       message(paste("--- RFE : Selecting", rfe_to_keep, "\n"))
 
@@ -216,7 +217,7 @@ query_check <- function(FOLDER_NAME = NULL,
               main = paste("ENVIRONMENTAL PREDICTORS \n A-priori importance for ID:", SUBFOLDER_NAME),
               xlab = "", ylab = "", axes = FALSE, outline = FALSE, horizontal = TRUE,
               col = c(rep("#1F867B", id), rep("gold", ncol(features)-id)), cex.main = 0.7, cex.lab = 0.7, cex.axis = 0.7)
-      axis(side = 4, at = 1:ncol(features), labels = levels(rfe_vip$var), las = 2, cex.axis = 0.6)
+      axis(side = 4, at = 1:length(levels(rfe_vip$var)), labels = levels(rfe_vip$var), las = 2, cex.axis = 0.6)
       axis(side = 1, at = c(seq(0, 15, 5), seq(0, 100, 20)), labels = c(seq(0, 15, 5), seq(0, 100, 20)), cex.axis = 0.7)
       title(xlab = "Estimated importance (%)", line = 2, cex.lab = 0.7)
       abline(v = c(seq(0, 15, 5), seq(0, 100, 20)), lty = "longdash", col = "gray50")
@@ -228,7 +229,7 @@ query_check <- function(FOLDER_NAME = NULL,
            bg = c(rep("#1F867B", id), rep("gold", ncol(features)-id)), col = "black",
            main = paste("ENVIRONMENTAL PREDICTORS \n Optimal number for ID:", SUBFOLDER_NAME),
            ylab = "", xlab = "")
-      axis(side = 4, at = 1:ncol(features), labels = levels(rfe_vip$var), las = 2, cex.axis = 0.6)
+      axis(side = 4, at = 1:length(levels(rfe_vip$var)), labels = levels(rfe_vip$var), las = 2, cex.axis = 0.6)
       title(xlab = "Loss metric (RMSE)", ylab = "Nb. of considered predictors", line = 2, cex.lab = 0.7)
       grid(col = "gray50")
       mtext(side = 1, line = 5, "Feature selection by recursive feature exclusion procedure (Random Forest algorithm). The upper panel presents the ranked feature 
@@ -238,19 +239,22 @@ average of 5) by 1 %. The considered features are in green. The ones that do not
 displayed in yellow.", cex = 0.6, adj = 0)
       dev.off()
 
-      # --- 6.7. Update ENV_VAR
+      # --- 6.7. Update ENV_VAR and clean memory
       QUERY$SUBFOLDER_INFO$ENV_VAR <- rfe_to_keep
+      
+      rm(rfe_df, rfe_fit, rfe_control, rfe_to_keep, rfFuncs, rfe_vip)
+      gc()
 
-    }
+    } # if not proportions
   } # END if RFE TRUE
 
   # --- 7. MESS analysis
-  r_mess <- NULL
+  r_mess <- list()
   for(m in 1:length(CALL$ENV_DATA)){
     # --- 7.1. Load necessary data
     features <- CALL$ENV_DATA[[m]] %>%
-      raster::subset(QUERY$SUBFOLDER_INFO$ENV_VAR)
-    names(features) <- QUERY$SUBFOLDER_INFO$ENV_VAR
+      terra::subset(., QUERY$SUBFOLDER_INFO$ENV_VAR) # load selected ones
+    names(features) <- QUERY$SUBFOLDER_INFO$ENV_VAR # clean names
 
     # --- 7.2. Compute the mess analysis
     # --- 7.2.1. Load environmental samples data
@@ -262,26 +266,25 @@ displayed in yellow.", cex = 0.6, adj = 0)
       tmp <- tmp[which(QUERY$Y != 0),]
     } # if pres remove pseudo abs
 
-    # --- 7.2.3. Analysis
-    r_mess[[m]] <- dismo::mess(x = features, v = as.data.frame(tmp), full = FALSE)
+    # --- 7.2.3. Analysis and cleanup
+    r_mess[[m]] <- predicts::mess(x = features, v = as.data.frame(tmp))
+    rm(tmp, features)
+    gc()
 
   } # for m month
 
   # --- 7.3. Append to query
-  QUERY$MESS <- stack(r_mess)
+  QUERY$MESS <- terra::rast(r_mess)
+  QUERY$MESS <- terra::wrap(QUERY$MESS) # Ensure that we can save it in a RData file
   
   # --- 8. Verification of feature pre-selection
   # --- 8.1. Initialize QC and necessary data
-  post_check <- univ_feature_check %>% 
+  univ_feature_check0 <- univ_feature_check # Save for the. plot legend
+  univ_feature_check <- univ_feature_check %>% 
     dplyr::filter(varname %in% !!QUERY$SUBFOLDER_INFO$ENV_VAR)
   
   # --- 8.2. Compute the quality check
-  MI_diff <- mean(post_check$mutual_information)
-  S_diff <- mean(post_check$spearman)
-  PRE_VIP <- max(c(MI_diff, S_diff))
-  
-  # --- 8.3. Append QUERY
-  QUERY[["eval"]][["PRE_VIP"]] <- PRE_VIP
+  QUERY[["eval"]][["PRE_VIP"]] <- max(c(mean(univ_feature_check$mutual_information), mean(univ_feature_check$spearman)))
   
   # --- 9. Verification plot
   # --- 9.1. Initialize plot
@@ -351,7 +354,7 @@ feature set is considered as sufficient", cex = 0.5, adj = 0)
       if(CALL$DATA_TYPE != "presence_only"){
         boxplot(Y[,y]~feature_bin[,1], axes = FALSE, col = pal[x],
                 main  = paste("(", x, ")", names(QUERY$X[x])), cex.main = 0.8,
-                sub = paste("Mutual Information:", signif(univ_feature_check$mutual_information[x],2), "| Spearman cor.:", signif(univ_feature_check$spearman[x],2)), cex.sub = 0.8,
+                sub = paste("Mutual Information:", signif(univ_feature_check0$mutual_information[x],2), "| Spearman cor.:", signif(univ_feature_check0$spearman[x],2)), cex.sub = 0.8,
                 xlab = "Feature values", cex.lab = 0.8,
                 ylab = yname)
         box()
@@ -363,7 +366,7 @@ feature set is considered as sufficient", cex = 0.5, adj = 0)
           message("QUERY CHECK (information): features with unique values are not plotted")
           hist(QUERY$X[,x][which(Y[,y] == 1)], breaks = seq(min(QUERY$X[,x]), max(QUERY$X[,x]), length.out = 25), col = scales::alpha(pal[x], 0.3),
                main  = paste("(", x, ")", names(QUERY$X[x])), cex.main = 0.8, axes = FALSE,
-               sub = paste("Mutual Information:", signif(univ_feature_check$mutual_information[x],2), "| Spearman cor.:", signif(univ_feature_check$spearman[x],2)), cex.sub = 0.8,
+               sub = paste("Mutual Information:", signif(univ_feature_check0$mutual_information[x],2), "| Spearman cor.:", signif(univ_feature_check0$spearman[x],2)), cex.sub = 0.8,
                xlab = "Feature values", cex.lab = 0.8,
                ylab = paste(yname, "(Frequency) \n Pseudo-abs. (gray) ; Presence (colored)"))
           hist(QUERY$X[,x][which(Y[,y] == 0)], breaks = seq(min(QUERY$X[,x]), max(QUERY$X[,x]), length.out = 25), col = scales::alpha("black", 0.3), add = TRUE)

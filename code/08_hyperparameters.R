@@ -126,8 +126,8 @@ hyperparameter <- function(FOLDER_NAME = NULL){
   # --- 2.7. MULTIVARIATE BOOSTED TREE REGRESSOR
   # Specific to proportions data
   HP$MBTR$model_grid <- data.frame(LEARNING_RATE = seq(1e-1, 1e-2, length.out = CALL$LEVELS),
-                                   N_Q = 25,
-                                   MEAN_LEAF = seq(2, 20, length.out = CALL$LEVELS)) %>% 
+                                   N_Q = 100,
+                                   MEAN_LEAF = seq(10, 50, length.out = CALL$LEVELS)) %>% 
     expand.grid() %>% 
     unique()
   

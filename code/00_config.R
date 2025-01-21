@@ -1,6 +1,7 @@
 # --- 1. System arguments
 Sys.setenv(HDF5_USE_FILE_LOCKING="FALSE") # to be able to open .nc
-Sys.setenv(RETICULATE_PYTHON = "/UP_home/aschickele/.virtualenvs/r-reticulate/bin/python")
+Sys.setenv(RETICULATE_PYTHON = ".virtualenvs/r-reticulate/bin/python")
+library(reticulate) # reload reticulate to make sure the path is correct
 
 # --- 2. R Packages
 # --- 2.1. General use
@@ -22,7 +23,8 @@ if(!require("feather")){install.packages("feather")}
 if(!require("vroom")){install.packages("vroom")}
 
 # --- 2.4. Spatial data and object
-if(!require("raster")){install.packages("raster")}
+if(!require("terra")){install.packages("terra")}
+if(!require("predicts")){install.packages("predicts")}
 if(!require("virtualspecies")){install.packages("virtualspecies")}
 if(!require("ncdf4")){install.packages("ncdf4")}
 

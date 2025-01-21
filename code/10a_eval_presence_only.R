@@ -9,57 +9,50 @@
 #' metric and variable importance metric)
 #' @return variable importance plots as PDF file
 
-eval_presence_only <- function(CALL,
-                        QUERY,
-                        MODEL,
-                        PDF_PATH){
+eval_presence_only <- function(CALL, QUERY, MODEL, PDF_PATH){
 
   # --- 1. Model performance assessment
   for(i in MODEL$MODEL_LIST){
+    
     # --- 1.1. Load final model data
     # Loop over the cross validation runs
     
     model_data <- lapply(1:(length(MODEL[[i]][["final_fit"]])), function(x){
-      # Extract final fit
+      # Extract and collect final predictions
       final_fit <- MODEL[[i]][["final_fit"]][[x]] %>%
         collect_predictions()
       
-      # Extract y and y_hat
-      y <- final_fit$measurementvalue
-      y_hat <- final_fit$.pred
-      
-      # Return
-      df <- data.frame(y = y, y_hat = y_hat)
+      # Create a data frame for y (obs) and y_hat (predicted)
+      df <- data.frame(y = final_fit$measurementvalue, 
+                       y_hat = final_fit$.pred)
       return(df)
     }) %>% bind_rows()
     
-    # --- 1.2. Extract observations and predictions
-    y <- model_data$y
-    y_hat <- model_data$y_hat
-
-    # --- 1.3. Compute Continuous Boyce Index into MODELS object
-    MODEL[[i]][["eval"]][["CBI"]] <- ecospat.boyce(fit = y_hat,
-                                                   obs = y_hat[which(y == 1)],
+    # --- 1.2. Compute Continuous Boyce Index into MODELS object
+    MODEL[[i]][["eval"]][["CBI"]] <- ecospat.boyce(fit = model_data$y_hat,
+                                                   obs = model_data$y_hat[which(model_data$y == 1)], # predictions at observed locations
                                                    PEplot = FALSE,
                                                    method = "pearson",
                                                    rm.duplicate = FALSE,
                                                    res = 100) %>%
       .$cor
+    
+    # --- 1.3. Memory cleanup after each iteration
+    rm(model_data)
+    gc()
 
   } # for each model loop
 
   # --- 2. Variable importance - algorithm level
   # --- 2.1. Initialize function
   # --- 2.1.1. Storage
-  var_imp <- NULL
+  var_imp <- list()
   
   # --- 2.1.2. General features - used later for plots
   features <- QUERY[["FOLDS"]][["resample_split"]][["splits"]][[1]]$data %>%
     dplyr::select(all_of(QUERY$SUBFOLDER_INFO$ENV_VAR))
   
   # --- 2.1.3. Loop over models
-  
-  
   for(i in MODEL$MODEL_LIST){
     
     # --- 2.2. Loop over the cross-validations
@@ -83,7 +76,11 @@ eval_presence_only <- function(CALL,
                                       data = features_x,
                                       y = target)
       
-      # --- 2.2.4. First in terms of RMSE, i.e., raw var importance for later ensemble computing
+      # --- 2.2.4. Intermediate cleanup
+      rm(features_x, target, m)
+      gc()
+      
+      # --- 2.2.5. First in terms of RMSE, i.e., raw var importance for later ensemble computing
       message(paste("--- VAR IMPORTANCE : compute for", i))
       out <- model_parts(explainer = explainer,
                          loss_function = loss_root_mean_square) %>%

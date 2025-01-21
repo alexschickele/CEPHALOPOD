@@ -1,168 +1,159 @@
 #' =============================================================================
 #' @name query_env
-#' @description appends the query_bio output with a list of environmental
-#' values at the sampling stations and a path to the environmental raster that
-#' will be used for projections
-#' @param FOLDER_NAME name of the corresponding folder
-#' @param SUBFOLDER_NAME list of sub_folders to parallelize on.
-#' @return X: a data frame of environmental values at the sampling stations
-#' @return Y and S updated with duplicate stations removed
-#' @return Updates the output in a QUERY.RData file
-#' @return an updated list of subfolders according to the minimum number of occurrence criteria
+#' @description This function appends the query output with environmental values 
+#' extracted from rasters at the sampling stations. It also updates the query object 
+#' with cleaned data (removing duplicate stations, handling missing values) and 
+#' filters samples based on a minimum sample size criterion.
+#'
+#' The function utilizes the terra library for raster extraction and spatial operations.
+#' It ensures environmental data is correctly matched to the biological observations.
+#' If necessary, the function retrieves environmental data from the nearest valid cell.
+#'
+#' @param FOLDER_NAME A character string indicating the folder containing the output.
+#' @param SUBFOLDER_NAME A list of subfolders to parallelize the process on.
+#'
+#' @return A data frame (X) of environmental values at the sampling stations.
+#' @return Updated data frames (Y and S) with duplicate stations removed.
+#' @return The updated QUERY object saved to a QUERY.RData file.
+#' @return An updated list of subfolders based on the minimum sample size criterion.
+#'
 
-query_env <- function(FOLDER_NAME = NULL,
-                      SUBFOLDER_NAME = NULL){
+query_env <- function(FOLDER_NAME = NULL, SUBFOLDER_NAME = NULL) {
   
   # --- 1. Initialize function
-  set.seed(123)
+  set.seed(123)  # Set seed for reproducibility
   
-  # --- 1.1. Start logs - append file
-  sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
+  # --- 1.1. Start logging process
+  sinkfile <- log_sink(FILE = file(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/log.txt"), open = "a"),
                        START = TRUE)
   message(paste(Sys.time(), "******************** START : query_env ********************"))
-  # --- 1.2. Load the run metadata and query
-  load(paste0(project_wd, "/output/", FOLDER_NAME,"/CALL.RData"))
-  load(paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/QUERY.RData"))
   
-  # --- 1.3. Get feature names
-  features_name <- CALL$ENV_DATA[[1]] %>% names()
-
-  # --- 2. Re-grid sample on the raster resolution and filter
-  # --- 2.1. Do the aggregation
-  # The cell centers are at .5, thus it is re-gridded to the nearest .5 value
-  res <- res(CALL$ENV_DATA[[1]])[[1]]
-  digit <- nchar(sub('^0+','',sub('\\.','',res)))-1
+  # --- 1.2. Load metadata and previous query
+  load(paste0(project_wd, "/output/", FOLDER_NAME, "/CALL.RData"))
+  load(paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/QUERY.RData"))
+  
+  # --- 1.3. Get environmental feature names
+  CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::rast(x)) # Unpack the rasters first
+  features_name <- names(CALL$ENV_DATA[[1]])
+  
+  # --- 2. Re-grid sample to raster resolution and filter invalid rows
+  res <- terra::res(CALL$ENV_DATA[[1]])[1]  # Resolution of raster
+  digit <- nchar(sub('^0+','',sub('\\.','', res)))-1  # Calculate number of decimal places in the resolution
   sample <- QUERY$S %>%
     cbind(QUERY$Y) %>%
-    mutate(decimallatitude = round(decimallatitude+0.5*res, digits = digit)-0.5*res) %>%
-    mutate(decimallongitude = round(decimallongitude+0.5*res, digits = digit)-0.5*res)
-
-  # --- 2.2. Remove NA in coordinates x month
-  sample <- sample %>% 
-    dplyr::filter(!is.na(decimallatitude) & !is.na(decimallongitude) & !is.na(month))
+    mutate(
+      decimallatitude = round(decimallatitude + 0.5 * res, digits = digit) - 0.5 * res,
+      decimallongitude = round(decimallongitude + 0.5 * res, digits = digit) - 0.5 * res
+    ) %>%
+    dplyr::filter(!is.na(decimallatitude) & !is.na(decimallongitude) & !is.na(month))  # Remove rows with NA in lat, long, or month
   
-  # --- 2.3. Early return in case of no biological data
-  if(nrow(sample) <= CALL$SAMPLE_SELECT$MIN_SAMPLE){
+  # --- 2.3. Early return if insufficient data
+  if (nrow(sample) <= CALL$SAMPLE_SELECT$MIN_SAMPLE) {
     log_sink(FILE = sinkfile, START = FALSE)
     return(NULL)
-  } 
+  }
   
-  # --- 3. Select one sample per group of identical coordinates x month
-  # Among each group of identical lat and long, concatenates description
-  # Updates the ID as the previous one is overwritten (we do not keep the raw data)
+  # --- 3. Group by coordinates and month, aggregate duplicate samples
   S <- sample %>%
     dplyr::select(-names(QUERY$Y)) %>%
     group_by(decimallongitude, decimallatitude, month) %>%
     reframe(across(everything(), ~ str_flatten(unique(.x), collapse = ";"))) %>% 
-    mutate(ID = row_number())
+    mutate(ID = row_number())  # Generate new row IDs
   
-  # --- 4. Average measurement value per group of identical coordinates x month
-  # The corresponding biological value is averaged across all row of S
-  Y0 <- sample %>% 
-    dplyr::select(decimallongitude, decimallatitude, month, names(QUERY$Y)) 
+  # --- 4. Average biological measurement per group of identical coordinates and month
+  Y <- sample %>%
+    dplyr::select(decimallongitude, decimallatitude, month, names(QUERY$Y)) %>%
+    group_by(decimallongitude, decimallatitude, month) %>%
+    reframe(across(everything(), \(x) mean(x, na.rm = TRUE)), .groups = "drop") %>%
+    dplyr::select(names(QUERY$Y))
   
-  Y <- NULL
-  for(n in 1:nrow(S)){
-    tmp <- Y0 %>% 
-      inner_join(S[n,], by = c("decimallongitude", "decimallatitude", "month")) %>% 
-      dplyr::select(names(QUERY$Y))
-    tmp <- apply(tmp, 2, mean)
-    Y <- rbind(Y, tmp)
-  }
-  Y <- as.data.frame(Y)
-
-  # --- 5. Extract the environmental data in the data frame
-  # If there is an NA, extract from nearest non-NA cells
-  # within a certain radius - two grid cells
-  X <- NULL
+  # --- 5. Extract environmental data for the sampling stations
+  X <- matrix(NA, nrow = nrow(S), ncol = length(features_name))
   to_remove <- NULL
-  for(j in 1:nrow(S)){
-    # --- 5.1. Point toward the right monthly raster
+  
+  for (j in seq_len(nrow(S))) {
     month <- as.numeric(S$month[j])
     features <- CALL$ENV_DATA[[month]]
     
-    # --- 5.2. First try to extract environmental data
-    xy <- S[j,] %>% dplyr::select(x = decimallongitude, y = decimallatitude)
-    tmp <- raster::extract(features, xy) %>%
-      as.data.frame()
-
-    # --- 5.3. Use neighbor cell if NA is not far inland
-    if(is.na(sum(tmp))){
-      r_dist <- distanceFromPoints(features, xy) # Compute distance to NA point
-      r_dist <- synchroniseNA(stack(r_dist, features[[1]]))[[1]] # Synchronize NA
-      r_dist[r_dist > 200e3] <- NA
-      min_dist <- which.min(getValues(r_dist)) # Get closest non-NA point ID
-      tmp <- features[min_dist] %>%
-        as.data.frame()
-      
-      # --- 5.4. Remove if NA is too far inland
-      if(sum(tmp)==0){
-        to_remove <- c(to_remove, j)
-      }
-    }
+    xy <- S[j, c("decimallongitude", "decimallatitude")] %>% as.data.frame()
     
-    X <- rbind(X, tmp)
-  } # End for j
+    # Extract environmental data using terra::extract
+    env_values <- terra::extract(features, xy)[-1]
+    
+    # If any NA values, find the nearest non-NA cell
+    if (is.na(sum(env_values))) {
+      r_dist <- terra::distance(features[[1]], 
+                                terra::vect(xy, geom = c("decimallongitude", "decimallatitude"), crs="+proj=longlat +datum=WGS84"))  # Distance to points
+      non_na_mask <- !is.na(terra::values(features[[1]]))
+      r_dist[!non_na_mask] <- NA  # Exclude areas with NA values
+      r_dist[r_dist > 500e3] <- NA
+      
+      if (any(!is.na(terra::values(r_dist)))) {
+        nearest_idx <- where.min(r_dist) # Find the nearest valid cell
+        env_values <- terra::extract(features, nearest_idx[1,2]) # Extract from the first min cell ID
+      } else {
+        to_remove <- c(to_remove, j)  # Mark row for removal if too far inland
+      }
+    } # End if NA
+    
+    X[j, ] <- unlist(env_values)
+  } # End j nrow(S) loop
   
-  # --- 6. Early return if no environmental data matching
-  if(length(X) == 0){
-    message("No environmental data could be extracted for these observation locations \n
-            Please check the coverage of the environmental predictors and the location of the observations")
-    return(NA)
-    }
+  X <- as.data.frame(X)
   colnames(X) <- features_name
   
-  # --- 7. Remove rows that are still NA - i.e. on land
-  # Already done for X in the previous step
-  if(length(to_remove) != 0){
-    Y <- dplyr::slice(Y, -to_remove)
-    S <- dplyr::slice(S, -to_remove)
-    message(paste("--- ENV EXTRACT : Removed row number", to_remove, "more than 2 grid cells on land \n"))
+  # --- 6. Remove rows without valid environmental data
+  if (length(to_remove) > 0) {
+    S <- S[-to_remove, ]
+    Y <- Y[-to_remove, ]
+    X <- X[-to_remove, ]
+    message(paste("Removed", length(to_remove), "rows due to missing environmental data."))
   }
   
-  # --- 8. Wrap up and save
-  # --- 8.1. Remove rare targets and update sample list
-  # Designed to clean the input table of proportion data (i.e. avoid sum lines = 0 in test of train sets)
-  if(CALL$DATA_TYPE == "proportions"){
-    target_filter <- apply(Y, 2, function(x)(x = sum(x/x, na.rm = TRUE)))
-    sample_filter <- Y %>% dplyr::select(which(target_filter >= CALL$SAMPLE_SELECT$MIN_SAMPLE)) %>% 
-      apply(1, sum)
-    Y <- Y[which(sample_filter > 0), which(target_filter >= CALL$SAMPLE_SELECT$MIN_SAMPLE)] %>% 
-      apply(1, function(x)(x = x/sum(x))) %>% 
-      aperm(c(2,1)) %>% 
-      as.data.frame()
-    X <- X[which(sample_filter > 0),]
-    S <- S[which(sample_filter > 0),]
-  # Necessary to update SP_SELECT in the CALL object for later...  
-  CALL$SP_SELECT <- names(Y)  
-  save(CALL, file = paste0(project_wd, "/output/", FOLDER_NAME,"/CALL.RData"))
-  } # if proportions
+  # --- 7. Filter out rare species (only for proportion data)
+  if (CALL$DATA_TYPE == "proportions") {
+    target_filter <- apply(Y, 2, function(x) sum(!is.na(x)))
+    valid_targets <- which(target_filter >= CALL$SAMPLE_SELECT$MIN_SAMPLE)
+    
+    sample_filter <- rowSums(!is.na(Y[, valid_targets]))
+    valid_samples <- which(sample_filter > 0)
+    
+    Y <- Y[valid_samples, valid_targets]
+    X <- X[valid_samples, ]
+    S <- S[valid_samples, ]
+    
+    # Normalize proportions data
+    Y <- t(apply(Y, 1, function(row) row / sum(row, na.rm = TRUE)))
+    
+    # Update species selection in CALL object
+    CALL$SP_SELECT <- colnames(Y)
+    CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::wrap(x)) # Pack the rasters before saving
+    
+    save(CALL, file = paste0(project_wd, "/output/", FOLDER_NAME, "/CALL.RData"))
+  }
   
-  # --- 8.2. Append QUERY with the environmental values and save
-  # And updated Y and S tables with duplicate coordinate removed
+  # --- 8. Save updated query data
   QUERY[["Y"]] <- Y
   QUERY[["S"]] <- S
   QUERY[["X"]] <- X
-  # And a QC on the sample size or col/row ratio after env. binning
-  if(nrow(Y) >= CALL$SAMPLE_SELECT$MIN_SAMPLE & (nrow(Y)/ncol(Y)) > 1){
+  
+  if (nrow(Y) >= CALL$SAMPLE_SELECT$MIN_SAMPLE && (nrow(Y) / ncol(Y)) > 1) {
     QUERY[["eval"]][["SAMPLE_SIZE"]] <- TRUE
   } else {
     QUERY[["eval"]][["SAMPLE_SIZE"]] <- FALSE
-  } # end if
+  }
   
-  # Save
-  save(QUERY, file = paste0(project_wd, "/output/", FOLDER_NAME,"/", SUBFOLDER_NAME, "/QUERY.RData"))
+  save(QUERY, file = paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/QUERY.RData"))
   
-  # --- 8.3. Stop logs
+  # --- 9. End logging and return
   log_sink(FILE = sinkfile, START = FALSE)
   
-  # --- 8.4. Update list of SUBFOLDER_NAME
-  if(nrow(Y) >= CALL$SAMPLE_SELECT$MIN_SAMPLE & (nrow(Y)/ncol(Y)) > 1){
+  if (QUERY[["eval"]][["SAMPLE_SIZE"]]) {
     return(SUBFOLDER_NAME)
   } else {
-    message(paste("QUERY ENV:", SUBFOLDER_NAME, "The sample does not match the minimum sample size - or has a row/col ratio under 1:1 (for proportions data) \n
-            Please work on the data to increase the sample size"))
+    message(paste("Insufficient sample size or bad row/column ratio for proportions data in", SUBFOLDER_NAME))
     return(NA)
   }
   
 } # END FUNCTION
+

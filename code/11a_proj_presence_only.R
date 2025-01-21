@@ -7,33 +7,24 @@
 #' @return an updated model list object containing the projections objects
 #' embedded in each model sub-list.
 
-proj_presence_only <- function(QUERY,
-                        MODEL,
-                        CALL){
-
+proj_presence_only <- function(QUERY, MODEL, CALL){
 
   # --- 1. Initialize function
   # --- 1.1. Open base raster and values
-  r0 <- CALL$ENV_DATA[[1]][[1]]
-  r_val <- getValues(r0)
+  CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::rast(x)) # Unpack the rasters first
+  r0 <- CALL$ENV_DATA[[1]][[1]] # Base raster 
 
   # --- 1.2. Define the projections to compute
-  # All algorithms if FAST == FALSE; only the ones that passed QC otherwise
-  if(CALL$FAST == FALSE){
-    loop_over <- CALL$HP$MODEL_LIST
-  } else {
-    loop_over <- MODEL$MODEL_LIST
-  }
+  # Only the algorithm that passed QC if the argument FAST equals TRUE
+  loop_over <- if(CALL$FAST) MODEL$MODEL_LIST else CALL$HP$MODEL_LIST
 
-  # --- 2. Define bootstraps
-  # --- 2.1. Re-assemble all query tables
-  tmp <- cbind(QUERY$Y, QUERY$X)#, QUERY$S)
-
-  # --- 2.2. Run the bootstrap generation from tidy models
-  boot_split <- bootstraps(tmp, times = CALL$N_BOOTSTRAP, strata = "measurementvalue")
+  # --- 2. Define bootstraps with tidymodels
+  boot_split <- bootstraps(cbind(QUERY$Y, QUERY$X), 
+                           times = CALL$N_BOOTSTRAP, strata = "measurementvalue")
 
   # --- 3. Start the loop over algorithms
   for(i in loop_over){
+    
     # --- 3.1. Fit model on bootstrap
     # fit_resamples() does not save models by default. Thus the control_resamples()
     boot_fit <- MODEL[[i]][["final_wf"]] %>%
@@ -45,71 +36,58 @@ proj_presence_only <- function(QUERY,
 
     # --- 4. Loop over month for predictions
     y_hat <- NULL
-    for(m in 1:length(CALL$ENV_DATA)){
+    for(m in seq_along(CALL$ENV_DATA)){
 
       # --- 4.1. Load the right features
-      features <- CALL$ENV_DATA[[m]] %>%
-        raster::subset(QUERY$SUBFOLDER_INFO$ENV_VAR) %>%
-        rasterToPoints() %>%
-        as.data.frame() %>%
-        dplyr::select(-c(x, y))
-
+      features <- terra::subset(CALL$ENV_DATA[[m]], QUERY$SUBFOLDER_INFO$ENV_VAR) %>% 
+        terra::as.data.frame()
+      
       # --- 4.2. Compute one prediction per bootstrap
       # As we extracted the model information in a supplementary column, we can
       # directly compute the bootstrap within the synthetic resample object.
       boot_proj <- boot_fit %>%
-        mutate(proj = map(.extracts, function(x)(x = predict(x, features))))
+        mutate(proj = purrr::map(.extracts, function(x)(x = predict(x, features))))
 
       # --- 4.3. First transform the object into a cell x bootstrap matrix
       # /!\ Need to create a unique row identifier for pivot_wider to work...
-      tmp <- boot_proj %>%
+      boot_proj <- boot_proj %>%
         dplyr::select(id, proj) %>%
         unnest(c(id, proj)) %>%
         as.data.frame() %>%
         group_by(id) %>%
         mutate(row = row_number()) %>%
         pivot_wider(names_from = id, values_from = .pred) %>%
-        dplyr::select(-row)
+        dplyr::select(-row) 
 
       # --- 4.4. Assign the desired values to the non-NA cells in the base raster
-      tmp <- apply(tmp, 2, function(x){
-        r <- r_val
+      boot_proj <- apply(boot_proj, 2, function(x){
+        r <- terra::values(r0) # Base raster values
         r[!is.na(r)] <- x
         x <- r
       })
 
       # --- 4.5. Concatenate with previous month
-      y_hat <- abind(y_hat, tmp, along = 3)
-      #message(paste("--- PROJ : month", m, "done \t"))
+      y_hat <- abind(y_hat, boot_proj, along = 3)
+      message(paste("--- PROJ :", i,"- month", m, "done \t"))
+      
+      rm(boot_proj, features)
+      gc()
+      
     } # for m month
 
     # --- 5. Cut spatial discontinuities
-    if(!is.null(CALL$CUT)){
-      tmp <- apply(y_hat, c(2,3), function(x){
-        # --- 5.1. Open presence data
-        xy <- QUERY$S %>%
-          dplyr::select(decimallongitude, decimallatitude)
-        xy <- xy[which(QUERY$Y == 1),] # specific to presence data
-
-        # --- 5.2. Cut y_hat
-        x[x < CALL$CUT*max(x, na.rm = TRUE)] <- 0
-        r <- setValues(r0, x)
-
-        # --- 5.3. Define patches and overlap with presence points
-        r_patch <- clump(r)
-        id_patch <- r_patch %>%
-          raster::extract(xy) %>% unique() %>%
-          .[!is.na(.)]
-
-        # --- 5.4. Subset values from a patch overlapping with presences
-        r_patch[!(r_patch %in% id_patch)] <- 0
-        r_patch <- getValues(r_patch)
-        r_patch[r_patch > 0] <- 1
-        x <- x*r_patch
+    if (!is.null(CALL$CUT)) {
+      y_hat <- apply(y_hat, c(2, 3), function(x) {
+        xy <- QUERY$S %>% dplyr::select(decimallongitude, decimallatitude) %>%
+          .[QUERY$Y == 1, ] # Extract values
+        x[x < CALL$CUT * max(x, na.rm = TRUE)] <- 0 # Set threshold
+        r_patch <- terra::patches(setValues(r0, x)) # Compute patches
+        id_patch <- terra::extract(r_patch, xy) %>% unique() %>% .[!is.na(.)] # Verify if each patch has observations
+        r_patch[!(r_patch %in% id_patch)] <- 0 # Remove the ones that dont
+        x <- x * terra::values(r_patch)
         return(x)
       })
-      y_hat <- tmp
-    } # if CUT
+    } # if cut
 
     # --- 6. Compute the average CV across bootstrap runs as a QC
     if(dim(y_hat)[[2]] == CALL$N_BOOTSTRAP) {
