@@ -272,9 +272,8 @@ user_synthesis(FOLDER_NAME = run_name)
 
 Supplementary analysis such as diversity estimates can be performed by any user based on the information, data and output stored in the `QUERY` and `MODEL.Rdata` objects.
 
-## Current status (May, 2nd, 2024)
+## Current status (Jan, 24th, 2025)
 
 Here you will find updated informations concerning the code status from a development perspective.
 
--   In its current state, the list of suggested predictors is also specific to local data. However, one can link to another predictor collection in the same format (WOA grid, 1x1 degree, depth resolved optional; variable = LAYER; dimensions = lon, lat, time, depth).
 -   The predictor set can be found online at: <https://data.d4science.net/m9WC>
