@@ -1,11 +1,6 @@
 #' ============================= MASTER SCRIPT =================================
 #' For the Blue-Cloud 2026 project workbench
-#' To be translated to D4-Science and notebook at the end
-#' A. Schickele 2023
-#' =============================================================================
-#' ============================== TO DO LIST ===================================
-#' - check data access service as input
-#' - check blue cloud data miner compatibility of the functions
+#' A. Schickele 2024
 #' =============================================================================
 
 # --- 0. Start up and load functions
