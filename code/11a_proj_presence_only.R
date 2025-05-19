@@ -80,10 +80,11 @@ proj_presence_only <- function(QUERY, MODEL, CALL){
       y_hat <- apply(y_hat, c(2, 3), function(x) {
         xy <- QUERY$S %>% dplyr::select(decimallongitude, decimallatitude) %>%
           .[QUERY$Y == 1, ] # Extract values
-        x[x < CALL$CUT * max(x, na.rm = TRUE)] <- 0 # Set threshold
-        r_patch <- terra::patches(setValues(r0, x)) # Compute patches
-        id_patch <- terra::extract(r_patch, xy) %>% unique() %>% .[!is.na(.)] # Verify if each patch has observations
+        x[x < (CALL$CUT * max(x, na.rm = TRUE))] <- 0 # Set threshold
+        r_patch <- terra::patches(setValues(r0, x), zeroAsNA = TRUE) # Compute patches
+        id_patch <- terra::extract(r_patch, xy)$patches %>% unique() %>% .[!is.na(.)] # Verify if each patch has observations
         r_patch[!(r_patch %in% id_patch)] <- 0 # Remove the ones that dont
+        r_patch[r_patch > 0] <- 1 # scale
         x <- x * terra::values(r_patch)
         return(x)
       })

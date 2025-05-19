@@ -54,10 +54,10 @@ query_check <- function(FOLDER_NAME = NULL,
     } else {
       to_remove <- outlier_iqr_col(Y, n = 2.5) %>% as.vector()
       if(length(to_remove > 0)){
-        Y <- dplyr::slice(Y, -to_remove) # we slice the transformed dataset as well for the plots
-        QUERY$Y <- dplyr::slice(QUERY$Y, -to_remove)
-        QUERY$X <- dplyr::slice(QUERY$X, -to_remove)
-        QUERY$S <- dplyr::slice(QUERY$S, -to_remove)
+        Y <- dplyr::slice(as.data.frame(Y), -to_remove) # we slice the transformed dataset as well for the plots
+        QUERY$Y <- dplyr::slice(as.data.frame(QUERY$Y), -to_remove)
+        QUERY$X <- dplyr::slice(as.data.frame(QUERY$X), -to_remove)
+        QUERY$S <- dplyr::slice(as.data.frame(QUERY$S), -to_remove)
       } # if to remove !NULL
       
       message(paste("--- OUTLIERS : Removed row number", to_remove, "\n"))
