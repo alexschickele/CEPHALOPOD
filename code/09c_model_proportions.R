@@ -40,7 +40,7 @@ model_proportions <- function(CALL,
                   min_leaf= MODEL$MBTR$model_grid$MEAN_LEAF[hp],
                   learning_rate=MODEL$MBTR$model_grid$LEARNING_RATE[hp],
                   lambda_weights=MODEL$MBTR$model_grid$LEARNING_RATE[hp]/100,
-                  lambda_leaves=0,
+                  lambda_leaves= 0,
                   n_q= as.integer(MODEL$MBTR$model_grid$N_Q[hp]),
                   early_stopping_rounds = 10)
     # tmp <- m[[2]] %>% unlist()

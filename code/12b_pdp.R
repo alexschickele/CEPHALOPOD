@@ -207,7 +207,7 @@ pdp <- function(FOLDER_NAME = NULL,
       pdp_all <- apply(pdp_m, 2, list)[-1] %>% 
         lapply(function(x)(x = data.frame(var = rep(QUERY$SUBFOLDER_INFO$ENV_VAR, each = dim(x[[1]])[1]),
                                           y_hat_m = apply(x[[1]], c(1,2), mean) %>% as.vector(),
-                                          y_hat_cv = apply(x[[1]], c(1,2), cv) %>% as.vector())))
+                                          y_hat_cv = apply(x[[1]], c(1,2), function(z)(z = sd(z)/mean(z)*100)) %>% as.vector())))
       
       
       x <- apply(pdp_m, 2, list)[[1]] %>% 
@@ -216,6 +216,7 @@ pdp <- function(FOLDER_NAME = NULL,
         as.vector()
       
       pdp_all <- lapply(pdp_all, function(z)(z = cbind(z, x)))
+      MODEL$MBTR$pdp_all <- pdp_all
       
     } else {
       # --- 5.2. Compute for tidymodels
@@ -285,7 +286,7 @@ pdp <- function(FOLDER_NAME = NULL,
         box("figure", col="black", lwd = 1)
       } else {
         lines(tmp$x, tmp$y_hat_m, type = 'l', ylim = c(0,1), lwd = 1, col = pal[j],
-             xlab = "", ylab = "", main = "")
+              xlab = "", ylab = "", main = "")
         polygon(x = c(tmp$x, rev(tmp$x)),
                 y = c(tmp$y_hat_m-tmp$y_hat_m*tmp$y_hat_cv/100, rev(tmp$y_hat_m+tmp$y_hat_m*tmp$y_hat_cv/100)),
                 col = scales::alpha(pal[j], 0.3), border = NA)

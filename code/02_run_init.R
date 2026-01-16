@@ -22,6 +22,10 @@
 #' @param ENV_VAR A list of .nc filenames to extract the environmental features from.
 #' @param ENV_PATH A string or vector indicating the path to the root directory where 
 #' the .nc files are located.
+#' @param ENV_THINNING A vector of .nc filenames in ENV_VAR to use for environmental space 
+#' subsampling. It computes the mean across similar environmental conditions
+#' @param ENV_THINNING_BINS number of bins used to define the environmental space in a quantile
+#' scale. By default 100 bins are used for each feature
 #' 
 #' @param METHOD_PA Method for generating pseudo-absences: "mindist", "cumdist", 
 #' or "density".
@@ -79,6 +83,8 @@ run_init <- function(FOLDER_NAME = "test_run",
                      DATA_TYPE = NULL,
                      ENV_VAR = NULL,
                      ENV_PATH = "/net/meso/work/nknecht/Masterarbeit/General_Pipeline/Data/environmental_climatologies",
+                     ENV_THINNING = NULL,
+                     ENV_THINNING_BINS = 100,
                      METHOD_PA = "density",
                      NB_PA = NULL,
                      PER_RANDOM = 0.25,
@@ -294,6 +300,8 @@ run_init <- function(FOLDER_NAME = "test_run",
   CALL[["FAST"]] <- FAST
   CALL[["ENV_VAR"]] <- ENV_VAR
   CALL[["ENV_PATH"]] <- ENV_PATH
+  CALL[["ENV_THINNING"]] <- ENV_THINNING
+  CALL[["ENV_THINNING_BINS"]] <- ENV_THINNING_BINS
   CALL[["NB_PA"]] <- NB_PA
   CALL[["PER_RANDOM"]] <- PER_RANDOM
   CALL[["BACKGROUND_FILTER"]] <- BACKGROUND_FILTER

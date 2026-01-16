@@ -35,7 +35,7 @@ query_env <- function(FOLDER_NAME = NULL, SUBFOLDER_NAME = NULL) {
   # --- 1.3. Get environmental feature names
   CALL$ENV_DATA <- lapply(CALL$ENV_DATA, function(x) terra::rast(x)) # Unpack the rasters first
   features_name <- names(CALL$ENV_DATA[[1]])
-  
+
   # --- 2. Re-grid sample to raster resolution and filter invalid rows
   res <- terra::res(CALL$ENV_DATA[[1]])[1]  # Resolution of raster
   digit <- nchar(sub('^0+','',sub('\\.','', res)))-1  # Calculate number of decimal places in the resolution
@@ -110,7 +110,67 @@ query_env <- function(FOLDER_NAME = NULL, SUBFOLDER_NAME = NULL) {
     message(paste("Removed", length(to_remove), "rows due to missing environmental data."))
   }
   
-  # --- 7. Filter out rare species (only for proportion data)
+  # --- 7. Environmental thinning
+  # We keep one observation per environmental space bin
+  # Recommended for large datasets only, alleviates bias in the environmental space
+  
+  # --- 7.1. Testing if inputs are right
+  input_test <- lapply(CALL$ENV_THINNING, function(x)(x %in% CALL$ENV_VAR))
+  
+  # --- 7.2. Perform the thinning
+  if(length(grep(FALSE, input_test)) == 0 & !is.null(CALL$ENV_THINNING)){
+    # --- 7.2.1. Build the environmental space
+    env_space <- terra::values(features) %>% as.data.frame() %>% 
+      dplyr::select(CALL$ENV_THINNING) %>% 
+      apply(., 2, function(x){quantile(x, seq(0,1,0.01), na.rm = T)}) %>% 
+      as.data.frame()
+    
+    # --- 7.2.2. Identify unique bins
+    X_env_space_id <- X %>% 
+      dplyr::select(CALL$ENV_THINNING) %>% 
+      mutate_all(., function(x){
+        bin = quantile(x, seq(0,1, length.out = CALL$ENV_THINNING_BINS), na.rm = T)
+        cut(x, breaks = bin, include.lowest = T, labels = F)
+      })
+    
+    # --- 7.2.3. Subset the occurrence per bin
+    to_group <- X_env_space_id %>% 
+      mutate(id = row_number()) %>% 
+      dplyr::group_by_at(CALL$ENV_THINNING) %>% 
+      mutate(group_id = cur_group_id()) %>% .$group_id
+    
+    # --- 7.2.4. Apply the thinning on the input data
+    # Biological target and features value is averaged per bin
+    # Location and metadata is drawn from the first sample as they have the same feature associated anyway
+    if (length(to_group) > 0) {
+      S_thinned <- cbind(S, to_group) %>% 
+        group_by(to_group) %>% 
+        slice_sample(n = 1) %>% 
+        ungroup() %>% 
+        dplyr::select(-to_group)
+      S <- S_thinned
+      
+      Y_thinned <- cbind(Y, to_group) %>% 
+        group_by(to_group) %>% 
+        summarize_all(median) %>% 
+        ungroup() %>% 
+        dplyr::select(-to_group)
+      Y <- Y_thinned
+      
+      X_thinned <- cbind(X, to_group) %>% 
+        group_by(to_group) %>% 
+        summarize_all(median) %>% 
+        ungroup() %>% 
+        dplyr::select(-to_group)
+      X <- X_thinned
+      
+      message(paste("Keeping only", nrow(S), "rows in unique environmental space bins."))
+    }
+  } else {
+    message("ENVIRONMENTAL THINNING: could not perform the environmental thinning as the specified features are not part of the inputs \n")
+  }
+  
+  # --- 8. Filter out rare species (only for proportion data)
   if (CALL$DATA_TYPE == "proportions") {
     target_filter <- apply(Y, 2, function(x) sum(!is.na(x)))
     valid_targets <- which(target_filter >= CALL$SAMPLE_SELECT$MIN_SAMPLE)
@@ -132,7 +192,7 @@ query_env <- function(FOLDER_NAME = NULL, SUBFOLDER_NAME = NULL) {
     save(CALL, file = paste0(project_wd, "/output/", FOLDER_NAME, "/CALL.RData"))
   }
   
-  # --- 8. Save updated query data
+  # --- 9. Save updated query data
   QUERY[["Y"]] <- Y
   QUERY[["S"]] <- S
   QUERY[["X"]] <- X
@@ -145,7 +205,7 @@ query_env <- function(FOLDER_NAME = NULL, SUBFOLDER_NAME = NULL) {
   
   save(QUERY, file = paste0(project_wd, "/output/", FOLDER_NAME, "/", SUBFOLDER_NAME, "/QUERY.RData"))
   
-  # --- 9. End logging and return
+  # --- 10. End logging and return
   log_sink(FILE = sinkfile, START = FALSE)
   
   if (QUERY[["eval"]][["SAMPLE_SIZE"]]) {

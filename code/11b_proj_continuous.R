@@ -102,12 +102,21 @@ proj_continuous <- function(QUERY, MODEL, CALL){
       y_hat <- apply(y_hat, c(2, 3), function(x) {
         xy <- QUERY$S %>% dplyr::select(decimallongitude, decimallatitude) %>%
           .[QUERY$Y == 1, ] # Extract values
+        x2 <- x
         x[x < (CALL$CUT * max(x, na.rm = TRUE))] <- 0 # Set threshold
         r_patch <- terra::patches(setValues(r0, x), zeroAsNA = TRUE) # Compute patches
         id_patch <- terra::extract(r_patch, xy)$patches %>% unique() %>% .[!is.na(.)] # Verify if each patch has observations
-        r_patch[!(r_patch %in% id_patch)] <- 0 # Remove the ones that dont
-        r_patch[r_patch > 0] <- 1 # scale
-        x <- x * terra::values(r_patch)
+        
+        if(length(id_patch) > 0) { # Make sure there is patches 
+          r_patch[!(r_patch %in% id_patch)] <- 0 # Remove the ones that dont
+          r_patch[r_patch > 0] <- 1 # scale
+          x <- x2 * terra::values(r_patch)
+        } else {
+          x <- x2
+          message(paste("--- CUT : could not been applied to this projection of", i, 
+                        "because it has a maximum suitability index inferior to the cutting threshold \n"))
+        }
+        
         return(x)
       })
     } # if cut
